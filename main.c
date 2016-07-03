@@ -16,35 +16,45 @@
 
 #include "core.h"
 #include "dump.h"
+#include <pcap.h>
+
 
 void usage() {
+	/* [-d] flag is available as well, but intended for debug only so it is unofficial */
+	/* [-i <interval>] flag was removed since it wasn't used (probably was left over from the kernel mode) */
 	PRINTF(
 			"Analyzing dump files mode usage:\n"
 			"  cpmonitor [ flags ] <dump_file_name>\n"
-			"Available flags: [-v] [-q] [-n] [-o <output.txt>] [-g <graph.csv>] [-t <name>] [-s <method>] [-i <interval>] [-c <connection table size>]\n"
+			"Available flags: [-v] [-q] [-n] [-o <output.txt>] [-g <graph.csv>] [-t <name>] [-s <method>] [-c <connection table size>]\n"
 			"  -v     : verbose\n"
 			"  -q     : quiet, no stdout, only print to output file(s)\n"
 			"  -n     : navigate through dump file\n"
 			"  -o     : create output file <output.txt> for the report\n"
 			"  -g     : create a timeline graph and print to <graph.csv>\n"
-			"  -s     : set top enteties sorting method, <method> 'p' for packet sorting(default) or 't' fot throghput sorting\n"
-			"  -t     : print the entire tables to <name>_conns.csv, <name>_hosts.csv and <name>_services.csv\n"			
+			"  -t     : print the entire tables to <name>_<table name>.csv (for example: <name>_conns.csv)\n"
+			"  -s     : set top entities sorting method, <method> 'p' for packet sorting(default) or 't' fot throghput sorting\n"
 			"  -c     : connection table size (an integer, defaut is 10k)\n\n  "
 		);		
 }
 
 
-void parse_args(int argc, char** argv)
+int parse_args(int argc, char** argv)
 {
-	int c;
+	int c = 0;
 
 	/* get flags from the user */
-	while ((c = getopt(argc, argv, "hvqno:g:s:t:c:?")) != -1) {
+	while ((c = getopt(argc, argv, "dhvqno:g:s:t:c:?")) != -1) {
          switch (c) {
-			/* verbode */
+			/* verbose */
+			/* should be first so that all parse_args messages will be outed when the flag is used */
          	case 'v':
 				cpmonitor_conf.verbose = 1;
 				PRINTV("parse_args: -v\n");	
+				break;
+			/* debug */
+			case 'd':
+				cpmonitor_conf.debug = 1;
+				PRINTV("parse_args: -d\n");
 				break;
 			/* quiet */
 			case 'q':
@@ -80,14 +90,14 @@ void parse_args(int argc, char** argv)
 				}
 				else {
 					PRINTE("Invalid sort method (p for packets, t for throughput)\n");
-					exit(-1);
+					return (-1);
 				}
 				break;
 			}
 			/* entire tables */
 			case 't':
-				cpmonitor_conf.table_name = optarg;
-				PRINTV("parse_args: -t %s\n", cpmonitor_conf.table_name);
+				cpmonitor_conf.table_file_prefix_name = optarg;
+				PRINTV("parse_args: -t %s\n", cpmonitor_conf.table_file_prefix_name);
 				break;
 			/* connection table size */
 			case 'c':
@@ -97,7 +107,7 @@ void parse_args(int argc, char** argv)
 				{
 					PRINTE("Error with the connection table size %d\n", cpmonitor_conf.connection_table_size);
 					usage();
-					exit(-1);
+					return (-1);
 				}
 				PRINTV("parse_args: -c %u\n", cpmonitor_conf.connection_table_size);
 				break;
@@ -109,7 +119,7 @@ void parse_args(int argc, char** argv)
 		 	case '?':
 				PRINTV("parse_args: -?\n");	
 				usage();
-				exit(0);
+				return 0;
          }	
 	}
 
@@ -123,112 +133,35 @@ void parse_args(int argc, char** argv)
 	    } else {
 			PRINTE("too many arguments\n");			
 		}
-		exit(-1);
+		return (-1);
     }
 
-	if (cpmonitor_conf.report_name == NULL && cpmonitor_conf.graph_name == NULL && cpmonitor_conf.table_name == NULL && cpmonitor_conf.quiet == 1) 
+	if (cpmonitor_conf.report_name == NULL && cpmonitor_conf.graph_name == NULL && cpmonitor_conf.table_file_prefix_name == NULL && cpmonitor_conf.quiet == 1)
 	{
 		PRINTE("-q and no output file(s) don't go together\n");
 		usage();
-		exit(-1);
-	}
-}
-
-void close_files() {
-
-	if (cpmonitor_conf.report_file) {
-		fclose(cpmonitor_conf.report_file);
-		cpmonitor_conf.report_file = NULL;
-	}
-			
-	if (cpmonitor_conf.graph_file) {
-		fclose(cpmonitor_conf.graph_file);
-	}
-
-	if (cpmonitor_conf.table_conns_file) {
-		fclose(cpmonitor_conf.table_conns_file);
-	}
-	
-	if (cpmonitor_conf.table_hosts_file) {
-		fclose(cpmonitor_conf.table_hosts_file);
-	}
-	
-	if (cpmonitor_conf.table_services_file) {
-		fclose(cpmonitor_conf.table_services_file);
-	}
-}
-
-int open_files() 
-{
-	char csv_name[1024];
-	
-	if (cpmonitor_conf.report_name) {
-		cpmonitor_conf.report_file = fopen(cpmonitor_conf.report_name, "w");
-		if (cpmonitor_conf.report_file == NULL) {
-			PRINTE("failed to open report file %s\n", cpmonitor_conf.report_name);
-			goto fail;
-		}
-	}
-
-	
-	if (cpmonitor_conf.graph_name) {
-		cpmonitor_conf.graph_file = fopen(cpmonitor_conf.graph_name, "w");
-		if (cpmonitor_conf.graph_file == NULL) {
-			PRINTE("failed to open graph file %s\n", cpmonitor_conf.graph_name);
-			goto fail;
-		}
-	}
-
-	if (cpmonitor_conf.table_name) {
-		snprintf(csv_name, sizeof(csv_name), "%s_conns.csv", cpmonitor_conf.table_name);
-		cpmonitor_conf.table_conns_file = fopen(csv_name, "w");
-		if (cpmonitor_conf.table_conns_file == NULL) {
-			PRINTE("failed to open connetion table file %s\n", csv_name);
-			goto fail;
-		}
-		
-		snprintf(csv_name, sizeof(csv_name), "%s_hosts.csv", cpmonitor_conf.table_name);
-		cpmonitor_conf.table_hosts_file = fopen(csv_name, "w");
-		if (cpmonitor_conf.table_hosts_file == NULL) {
-			PRINTE("failed to open host table file %s\n", csv_name);			
-			goto fail;
-		}
-		
-		snprintf(csv_name, sizeof(csv_name), "%s_services.csv", cpmonitor_conf.table_name);
-		cpmonitor_conf.table_services_file = fopen(csv_name, "w");
-		if (cpmonitor_conf.table_services_file == NULL) {
-			PRINTE("failed to open services table file %s\n", csv_name);
-			goto fail;
-		}		
+		return (-1);
 	}
 
 	return 0;
-fail:
-	close_files();
-	return 1;
 }
+
 
 int main(int argc, char** argv) 
 {
-	
+	int ret = 0;
+
 	if (argc < 2) {
 		usage();
-		return 0;	
 	}
-	
-	parse_args(argc, argv);
-	
-	if (open_files() > 0) {
-		exit(-1);
+	else {
+		ret = parse_args(argc, argv);
+		if (ret == 0) {
+			ret = dump_main();
+		}
 	}
 
-	dump_main();
-
-	close_files();
-
-	do_print_leaks();
-
-	return 0;
+	return ret;
 }
 
 

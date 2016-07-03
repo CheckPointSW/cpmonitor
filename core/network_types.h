@@ -108,6 +108,7 @@ typedef struct {
 
 #define ip6_nxt ip6_ctlun.ip6_un1.ip6_un1_nxt
 #define ip6_plen ip6_ctlun.ip6_un1.ip6_un1_plen
+#define ip6_flow ip6_ctlun.ip6_un1.ip6_un1_flow
 
 } ipv6hdr_t;
 
@@ -126,6 +127,8 @@ typedef struct {
 typedef struct {
 	uint16	source_port;
 	uint16	dest_port;
+	uint32  ver_tag;
+	uint32  check;
 } sctphdr_t;
 
 #define	TH_FIN	0x01

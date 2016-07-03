@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pcap.h>
 
 #include "core.h"
 #include "printer.h"
@@ -46,15 +47,6 @@ struct	arc_linux_header {
 #define DLT_FDDI 10
 #define DLT_LINUX_SLL 113
 
-struct pcap_file_header {
-	__u32 magic;
-	__u16 version_major;
-	__u16 version_minor;
-	int thiszone;	/* gmt to local correction */
-	__u32 sigfigs;	/* accuracy of timestamps */
-	__u32 snaplen;	/* max length saved portion of each pkt */
-	__u32 linktype;	/* data link type (LINKTYPE_*) */
-};
 
 typedef struct {
    	struct timeval ts;	/* time stamp */
@@ -80,12 +72,6 @@ struct snoop_v2_file_header {
 	int 	version; /* must be 2 */
 	int 	datalink_t; /* we support only ethernet */
 };
-
-/*
- * The number of bytes in an ethernet (MAC) address.
- */
-#define	ETHER_ADDR_LEN		6
-#define	ETHER_MAX_LEN		1518 /* max packet length */
 
 typedef struct {
 	char	ether_dhost[ETHER_ADDR_LEN];
@@ -129,6 +115,8 @@ typedef struct {
 	__u32 msec;
 } snoop_v2_pkthdr_t;
 
-void dump_main();
+struct ifaddrs * addrs; /* for debug prints */
+
+int dump_main();
 
 #endif

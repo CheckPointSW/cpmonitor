@@ -108,34 +108,6 @@ static int timeval_to_str(struct timeval * tv, char * buff, int len, int off, ch
 	}
 }
 
-void ipv6_to_str(ipv6_addr_t * addr, char * buf, uint32 len) 
-{
-	int i, off = 0;
-	int in_zeros = 0;
-	for(i=0; i<15; i++) {
-		if(addr->s6_addr[i] == 0) {
-			in_zeros = 1;
-			continue;
-		} 
-		else {
-			if(in_zeros) {
-				off += snprintf(buf + off, len - off, ":");
-			} 
-			in_zeros = 0;			
-		}		
-		off += snprintf(buf + off, len - off, "%x:", addr->s6_addr[i]);
-	}
-	if(in_zeros) {
-		off += snprintf(buf + off, len - off, ":");
-	} 
-	snprintf(buf + off, len - off, "%x", addr->s6_addr[15]);
-}
-
-void ipv4_to_str(ipv4_addr_t addr, char * buf, uint32 len) 
-{
-	snprintf(buf, len, "%u.%u.%u.%u", (addr >> 24), (addr >> 16) & 0xFF, (addr >> 8) & 0xFF, addr & 0xFF);
-}
-
 static const char * PCKTS_FORMATS[] = { "%8u\t" 	, "%u," };
 static const char * BYTES_FORMATS[] = { "%8llu\t" 	, "%llu," };
 static const char * PRCNT_FORMATS[] = { "%3d%%\t" 	, "%3d%%," };
@@ -399,9 +371,9 @@ BOOL get_key_internet_layers_str(hash_key_union_t * key, print_type_e p_type, ch
 		break;
 
 	case HASH_NONE:
-	case HASH_KEY_MAX:
 	case HASH_IPV6_SERVER:		
-	case HASH_IPV4_SERVER:	
+	case HASH_IPV4_SERVER:
+	case HASH_KEY_MAX:
 		return FALSE;
 	}
 
@@ -473,8 +445,8 @@ static const char * PROTO_FORMATS[] = { "%5d\t" , "%d," };
 #define  P(_str_arr, ...) *off += snprintf(buff + *off, buff_len - *off, _str_arr[p_type], ##__VA_ARGS__)
 void file_add_ent_five_tuple(hash_key_union_t * key, print_type_e p_type, char* buff, int buff_len, int * off, const char * pre_str)
 {
-	char 	src_ip_buff[100];
-	char 	dst_ip_buff[100];
+	char 	src_ip_buff[40] = {0};
+	char 	dst_ip_buff[40] = {0};
 	uint16 	dport = 0;
 	uint16  sport = 0;
 	uint8	ipproto = 0;
@@ -656,7 +628,7 @@ void file_print_hash_table(hash_table_t* table) {
 	usage_print_flags_t usage_print_flags = USAGE_PRINT_SYN_CNT | USAGE_PRINT_BYTES | USAGE_PRINT_PACKETS | USAGE_PRINT_PRECENTAGE | USAGE_PRINT_AV_PKT_SIZE | USAGE_PRINT_IN_OUT;
 	get_total_usage(&total_usage);
 	
-	PRINTF("printing connection table with %u elements to %s_*.csv\n", table->count, cpmonitor_conf.table_name);
+	PRINTF("printing connection table with %u elements to %s_*.csv\n", table->count, cpmonitor_conf.table_file_prefix_name);
 
 	file_add_bidi_usage_headers(usage_print_flags, CSV, usage_hdr_buff, sizeof(usage_hdr_buff), &usage_hdr_buff_off);
 	
@@ -913,16 +885,16 @@ void bytes_convertor_str(uint64 bytes, char* buff, int buff_len, int * off, int 
 
 void print_top_connection_table(char *buffer, int buff_len, int *buff_off, summed_data_t * summed_data, int N, int print_flags)
 {
-	TPrint *tp;
-	int i;
-	char 	src_ip_buff[100];
-	char 	dst_ip_buff[100];
-	char	usage_str[100];
-	char 	byte_size[100];
-	char	avg_size[100];
+	TPrint *tp = NULL;
+	int i = 0;
+	char src_ip_buff[40] = {0};
+	char dst_ip_buff[40] = {0};
+	char usage_str[100] = {0};
+	char byte_size[100] = {0};
+	char avg_size[100] = {0};
 	int flags = USAGE_PRINT_BYTES | USAGE_PRINT_PACKETS | USAGE_PRINT_AV_PKT_SIZE | USAGE_PRINT_PRECENTAGE;
-	hash_key_union_t * 	key;
-	top_ent_t * top_ents_arr;	
+	hash_key_union_t * 	key = NULL;
+	top_ent_t * top_ents_arr = NULL;
 	int offset = 0;
 	int min_rows = 0;
 
@@ -1092,15 +1064,15 @@ end:
 
 void print_top_destinations_table(char *buffer, int buff_len, int *buff_off, summed_data_t * summed_data, int N, int print_flags)
 {
-	TPrint *tp;
-	int i;
-	char 	src_ip_buff[100];
-	char	usage_str[100];
-	char 	byte_size[100];
-	char	avg_size[100];
+	TPrint *tp = NULL;
+	int i = 0;
+	char src_ip_buff[40] = {0};
+	char usage_str[100] = {0};
+	char byte_size[100] = {0};
+	char avg_size[100] = {0};
 	int flags = USAGE_PRINT_BYTES | USAGE_PRINT_PACKETS | USAGE_PRINT_AV_PKT_SIZE | USAGE_PRINT_PRECENTAGE;
-	hash_key_union_t * 	key;
-	top_ent_t * top_ents_arr;
+	hash_key_union_t * key = NULL;
+	top_ent_t * top_ents_arr = NULL;
 	int offset = 0;
 	int min_rows = 0;
 	
@@ -1451,16 +1423,14 @@ void get_maximum_usage_from_data(summed_data_t * summed_data, int from, int to, 
 
 void sum_data_to_one(summed_data_t * summed_data, int from, int to, int N, summed_data_t * target, BOOL exclude_first_sec)  
 {
-	
 	static cpmonitor_db_t	tmp_cpmonitor_db;	
 	static maximum_t		maximum;
-	top_ent_t * 			top_ents_arr;
-	hash_entry_base_t * 	ent;
-	int 					i, j, top_kind;
+	top_ent_t * 			top_ents_arr = NULL;
+	hash_entry_base_t * 	ent = NULL;
+	int 					i = 0, j = 0, top_kind = 0;
 	int						total_connections = 0;
-	uint32					unsupported_packets = 0;
+	uint32					unsupported_entries = 0;
 	int						total_cps = 0;
-	sort_method_t			sort_method;
 	
 	if(N > TOP_N) {
 		N = TOP_N;
@@ -1474,19 +1444,14 @@ void sum_data_to_one(summed_data_t * summed_data, int from, int to, int N, summe
 		return;
 	}
 
-	sort_method = summed_data[from].sort_method;
 	for(j = from ; j < to ; j++ ) {
+		unsupported_entries += summed_data[j].unsupported_entries;
 		if (summed_data[j].total_usage.packets == 0) {
-			unsupported_packets += summed_data[j].unsupported_packets;
 			continue;
-		}
-		if(sort_method != summed_data[j].sort_method) {
-			sort_method = sort_method_unknown;
 		}
 		accumulate_usage(&tmp_cpmonitor_db.summed_data[0].total_usage, &summed_data[j].total_usage);
 		accumulate_tcp_stats(&tmp_cpmonitor_db.summed_data[0].tcp_stats, &summed_data[j].tcp_stats);
 		total_connections += summed_data[j].connections;
-		unsupported_packets += summed_data[j].unsupported_packets;
 
 		if(summed_data[j].connections > maximum.connection) {
 			maximum.connection = summed_data[j].connections;
@@ -1532,8 +1497,7 @@ void sum_data_to_one(summed_data_t * summed_data, int from, int to, int N, summe
 
 	tmp_cpmonitor_db.summed_data[0].connections = total_connections;
 	tmp_cpmonitor_db.summed_data[0].cps = total_cps;
-	tmp_cpmonitor_db.summed_data[0].sort_method = sort_method;
-	tmp_cpmonitor_db.summed_data[0].unsupported_packets = unsupported_packets;
+	tmp_cpmonitor_db.summed_data[0].unsupported_entries = unsupported_entries;
 	tmp_cpmonitor_db.summed_data[0].time_start = summed_data[from].time_start;
 	
 	hash_table_inc_timeslot(&tmp_cpmonitor_db, &summed_data[to-1].time_end);
@@ -1547,20 +1511,19 @@ void sum_data_to_one(summed_data_t * summed_data, int from, int to, int N, summe
 
 void print_total_usage_table(char *buffer, int buff_len, int *buff_off, summed_data_t * summed_data, int print_flags)
 {
-	TPrint 	*tp;
-	usage_t total;	
-	int 	mili_seconds;
-	char 	buff[128];
-	char	usage[128];
-	char	time[96];
+	TPrint *tp = NULL;
+	usage_t total = {0};
+	int mili_seconds = 0;
+	char buff[128] = {0};
+	char usage[128] = {0};
+	char time[96] = {0};
 	int off = 0;
 
 	tp = tprint_create (buffer, buff_len, buff_off, TABLES_SHOW_BORDER, TABLES_SHOW_HEADER, TABLES_SPACES_LEFT, TABLES_SPACES_BETWEEN, 0);
 
 	tprint_column_add (tp, "Total Usage", TPAlign_center, TPAlign_left);
 
-	
-	mili_seconds = (summed_data->time_end.tv_sec - summed_data->time_start.tv_sec) * 1000 + (summed_data->time_end.tv_usec - summed_data->time_start.tv_usec) / 1000;
+	mili_seconds = calc_time_diff(&(summed_data->time_end), &(summed_data->time_start));
 	mili_seconds = (mili_seconds < 1000) ? 1000 : mili_seconds;
 	
 	total = summed_data->total_usage;
@@ -1622,7 +1585,7 @@ void print_total_usage_table(char *buffer, int buff_len, int *buff_off, summed_d
 	tprint_data_add_str (tp, 0, buff);
 
 	/* sort method */
-	switch(summed_data->sort_method) {
+	switch (cpmonitor_conf.sort_method) {
 		case sort_method_packets:
 			snprintf(buff, sizeof(buff), "Sort method:             packets rate");
 			break;
@@ -1636,7 +1599,7 @@ void print_total_usage_table(char *buffer, int buff_len, int *buff_off, summed_d
 	tprint_data_add_str (tp, 0, buff);
 
 	/* Unsupported packets */
-	snprintf(buff, sizeof(buff), "Unsupported packets:     %u", summed_data->unsupported_packets);
+	snprintf(buff, sizeof(buff), "Unsupported entries:     %u", summed_data->unsupported_entries);
 	tprint_data_add_str (tp, 0, buff);
 
 	
@@ -1644,6 +1607,73 @@ void print_total_usage_table(char *buffer, int buff_len, int *buff_off, summed_d
 	tprint_free (tp);
 }
 
+void file_print_total_usage_table(FILE *table_total_usage_file, summed_data_t * summed_data)
+{
+	usage_t total = {0};
+	int mili_seconds = 0;
+
+	/* print total usage */
+	fprintf(table_total_usage_file, "Duration,Packets,Size,Av. PPS,Max PPS,MPPS Time,Av. CPS,Max CPS,MCPS Time,Av. Thrput,Max Thrput,MThrput Time,Av. ACPS,Max ACPS,MACPS Time,Sort,Unsupported,\n");
+
+	mili_seconds = calc_time_diff(&(summed_data->time_end), &(summed_data->time_start));
+	mili_seconds = (mili_seconds < 1000) ? 1000 : mili_seconds;
+
+	total = summed_data->total_usage;
+
+	/* Run time (Duration) */
+	fprintf(table_total_usage_file, "%d.%d,", mili_seconds / 1000, mili_seconds % 1000);
+
+	/* Total packets (Packets) */
+	fprintf(table_total_usage_file, "%u,", total.packets);
+
+	/* Total packets size (Size) */
+	fprintf(table_total_usage_file, "%lld,", (long long)(total.bytes*BYTE_RES));
+
+	/* Average packets per second (Av. PPS) */
+	fprintf(table_total_usage_file, "%.2f,", 1000.0 * total.packets/mili_seconds);
+
+	/* maximum packets per second (Max PPS, MPPS Time) */
+	fprintf(table_total_usage_file, "%u,", summed_data->maximum.total_usage.packets);
+	fprintf(table_total_usage_file, "%ld,", summed_data->maximum.packets_usage_time.tv_sec);
+
+	/* Average new connections per second (Av. CPS) */
+	fprintf(table_total_usage_file, "%.2f,", 1000.0 * summed_data->cps / mili_seconds);
+
+	/* Maximum new connections per second (Max CPS, MCPS Time) */
+	fprintf(table_total_usage_file, "%u,", summed_data->maximum.cps);
+	fprintf(table_total_usage_file, "%ld,", summed_data->maximum.cps_time.tv_sec);
+
+	/* Average throughput (Av. Thrput) */
+	total.bytes = 1000 * total.bytes/mili_seconds;
+	fprintf(table_total_usage_file, "%lld,", (long long)(total.bytes*BIT_RES));
+
+	/* Maximum throughput (Max Thrput, MThrput Time) */
+	fprintf(table_total_usage_file, "%lld,", (long long)(summed_data->maximum.total_usage.bytes*BIT_RES));
+	fprintf(table_total_usage_file, "%ld,", summed_data->maximum.bytes_usage_time.tv_sec);
+
+	/* Average active connection per second (streams) (Av. ACPS)*/
+	fprintf(table_total_usage_file, "%.2f,", 1000.0 * summed_data->connections / mili_seconds);
+
+	/* Maximum active connections per second (Max ACPS, MACPS Time) */
+	fprintf(table_total_usage_file, "%u,", summed_data->maximum.connection);
+	fprintf(table_total_usage_file, "%ld,", summed_data->maximum.connection_time.tv_sec);
+
+	/* sort method (Sort) */
+	switch (cpmonitor_conf.sort_method) {
+		case sort_method_packets:
+			fprintf(table_total_usage_file, "packets rate,");
+			break;
+		case sort_method_throughput:
+			fprintf(table_total_usage_file, "throughput,");
+			break;
+		default:
+			fprintf(table_total_usage_file, "unknown,");
+			break;
+	}
+
+	/* Unsupported unsupported_entries (Unsupported) */
+	fprintf(table_total_usage_file, "%u,", summed_data->unsupported_entries);
+}
 
 void print_tables(char *buffer, int buff_len, int *buff_off, summed_data_t * summed_data, int N, int print_flags)
 {		
@@ -1680,10 +1710,12 @@ void print_tables(char *buffer, int buff_len, int *buff_off, summed_data_t * sum
 
 void print_report()
 {
-	char buff[4096*10];
+	char buff[4096*10] = {0};
 	int off = 0;
 	int N = 10;
 	summed_data_t comp_summed_data;
+
+	memset(&comp_summed_data, 0, sizeof(comp_summed_data));
 
 	sum_data_to_one(summed_data_arr, 0, cpmonitor_db.current_expire_index, N, &comp_summed_data, TRUE);
 
@@ -1693,6 +1725,7 @@ void print_report()
 	
 	if(cpmonitor_conf.table_conns_file) {
 		file_print_hash_table(&(cpmonitor_db.hash_table));
+		file_print_total_usage_table(cpmonitor_conf.table_total_usage_file, &comp_summed_data);
 	}
 }
 
@@ -1862,7 +1895,7 @@ void dump_navigate()
 								"\tz		remove line from tables\n" 
 								"\tq		quit\n" 
 								"\n"
-								"\tpress any key to reutun\n"
+								"\tpress any key to return\n"
 								);				
 			PRINTF("%s", buffer);
 			input = getch(0, 1);

@@ -20,7 +20,7 @@ HDRS = core.h basic_types.h network_types.h
 INC= -I../known
 
 CC = gcc
-CFLAGS = -g -Wall -c -D_FILE_OFFSET_BITS=64 -D__USE_LARGEFILE
+CFLAGS = -g -Werror -Wall -c -D_FILE_OFFSET_BITS=64 -D__USE_LARGEFILE
 RM=rm
 
 # Default Target

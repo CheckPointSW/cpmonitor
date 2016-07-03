@@ -26,14 +26,14 @@ OBJS_MAIN = main.o
 GLIB_FLAG = `pkg-config --cflags glib-2.0`
 
 INCLUDES += -I/usr/lib/glib-2.0/include -I/usr/include/glib-2.0 -I$(COREDIR) -I$(DUMPDIR) -I$(PRINTERDIR) -I$(KNOWNDIR) $(GLIB_FLAG)
-STDLIBS += -lglib-2.0
+STDLIBS += -lglib-2.0 -lpcap
 
 
 SUBDIRS = $(COREDIR) $(PRINTERDIR) $(DUMPDIR) 
 ALLOBJS = $(OBJS_MAIN) $(COREDIR)/core.o $(DUMPDIR)/dump.o $(PRINTERDIR)/printer.o $(PRINTERDIR)/known.o $(PRINTERDIR)/tprint.o
 
 CC = gcc
-CFLAGS += -g -Wall
+CFLAGS += -g -Werror -Wall
 # supporting dump files larger than 4GB
 CFLAGS += -D_FILE_OFFSET_BITS=64 -D__USE_LARGEFILE
 RM = rm -f

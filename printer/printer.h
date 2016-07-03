@@ -40,10 +40,6 @@ typedef enum {
 	USAGE_PRINT_SYN_CNT		=	0x4000,
 } usage_print_flags_t;
 
-
-void ipv6_to_str(ipv6_addr_t * addr, char *buf, uint32 len);
-void ipv4_to_str(ipv4_addr_t addr, char *buf, uint32 len);
-
 typedef enum {
 	NICE, CSV
 } print_type_e;

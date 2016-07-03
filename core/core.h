@@ -24,6 +24,7 @@
 #include "stdio.h"
 #include "basic_types.h"
 #include "network_types.h"
+#include <netinet/ether.h>
 
 void * do_malloc(int sz, const char *file, int line);
 void do_free(void * ptr, const char* file, int line);
@@ -39,6 +40,10 @@ void do_print_leaks(void);
 
 
 #define HZ 	1000 /* defines the timestep (1000 jiffies is 1 second, I think)*/
+#define PRINTD(...) \
+	do { \
+		if (cpmonitor_conf.debug) { FPRINTF(__VA_ARGS__); } \
+	} while (0)
 #define VERB_STR "Verbose: "
 #define PRINTV(...) \
 	do { \
@@ -58,6 +63,12 @@ void do_print_leaks(void);
 	}while (0)
 
 #define PRINTF(...) if (!cpmonitor_conf.quiet) printf(__VA_ARGS__);
+#define FPRINTF(...) \
+	do { \
+		PRINTF(__VA_ARGS__); \
+		if (cpmonitor_conf.report_file) fprintf(cpmonitor_conf.report_file, __VA_ARGS__); \
+	}while (0)
+
 
 typedef union {
 	ipv4_addr_t ipv4;
@@ -68,6 +79,11 @@ typedef union {
 #define IPV4_LEN(ip_hdr)				(ntohs(((ipv4hdr_t *) (ip_hdr))->ip_len))
 #define IPV6_LEN(ip_hdr)				(ntohs(((ipv6hdr_t *) (ip_hdr))->ip6_plen))
 #define IP_LEN(ip_ver, ip_hdr)			((ip_ver == 4) ?  IPV4_LEN(ip_hdr): IPV6_LEN(ip_hdr))
+
+#define	MAX_IP_ID						65535
+#define IPV4_ID(ip_hdr)					(ntohs(((ipv4hdr_t *) (ip_hdr))->ip_id))
+#define IPV6_ID(ip_hdr)					(ntohl(((ipv6hdr_t *) (ip_hdr))->ip6_flow))
+#define IP_ID(ip_ver, ip_hdr)			((ip_ver == 4) ?  IPV4_ID(ip_hdr): IPV6_ID(ip_hdr))
 
 #define IPV4HDR_LEN(ip_hdr)				(((ipv4hdr_t *)(ip_hdr))->ip_hl << 2)
 #define IPV6HDR_LEN(ip_hdr)				(40)
@@ -169,8 +185,11 @@ typedef struct {
 	int 			timestep;					/* default is 1 second */
 	sort_method_t   sort_method;
 	BOOL 			verbose;					/* print some debug messages */
+	BOOL			debug;						/* print extensive debug messages */
 	BOOL 			quiet;						/* no output to stdout, just to the files */
 	BOOL			nav;
+	BOOL			interface_mode;				/* dump file was created by using tcpdump with -Penni flag. display and print interfaces and paths. */
+	BOOL			mac_addr_mode;				/* dump file was created by using tcpdump with -i flag. print each entry's mac addresses in debug mode only. */
 	int 			linklen;					/* each packets has a linklayer header, we skip it */
 	dump_type_t 	dump_type;			
 	
@@ -180,7 +199,8 @@ typedef struct {
 	FILE * 			report_file;	
 	const char * 	graph_name;
 	FILE * 			graph_file;
-	const char * 	table_name;
+	const char * 	table_file_prefix_name;
+	FILE *			table_total_usage_file;
 	FILE * 			table_conns_file;
 	FILE * 			table_hosts_file;
 	FILE * 			table_services_file;
@@ -218,7 +238,6 @@ typedef enum {
 	S2C = 1
 } direction_t;
 
-
 /* this union is created for correct alignment in 64bit machines */
 typedef union {
 	hash_type_t key_type;
@@ -231,7 +250,7 @@ typedef union {
 #define HASH_IS_SERVICE(_a) 	((_a)->key_type == HASH_SERVICE)
 #define HASH_IS_TYPE_VALID(_a)	((_a)->key_type == HASH_IPV4_SERVER || (_a)->key_type == HASH_IPV4_CONN || \
 								 (_a)->key_type == HASH_IPV6_SERVER || (_a)->key_type == HASH_IPV6_CONN || \
-								 (_a)->key_type == HASH_SERVICE )
+								 (_a)->key_type == HASH_SERVICE)
 
 typedef struct {
 	union {
@@ -269,6 +288,8 @@ typedef struct {
 	};
 	ipproto_t ipproto;
 } ipv6_fivetuple_t;
+
+#define INTERFACE_DESCRIPTION_LENGTH	15
 
 typedef struct {
 	hash_type_u key_type_u;
@@ -316,10 +337,9 @@ typedef struct {
 	struct timeval	time_end;	
 	int				connections;
 	int				cps;
-	sort_method_t	sort_method;
 	tcp_stats_t 	tcp_stats;
 	maximum_t		maximum;
-	uint32			unsupported_packets;		
+	uint32			unsupported_entries;
 } summed_data_t;
 
 typedef struct hash_entry_base_s {
@@ -342,7 +362,7 @@ typedef struct hash_entry_base_s {
 typedef struct {
 	hash_entry_base_t ** hash;
 	uint32 				size; 	/*the array size*/
-	uint32 				count; 	/*the number of elemts currently in*/
+	uint32 				count; 	/*the number of elements currently in*/
 	hash_entry_base_t * expire_ring[HISTORY_N]; 
 } hash_table_t;
 
@@ -353,26 +373,32 @@ typedef struct {
 	int 			current_expire_index;
 	int				num_of_hash_overflows;
 	summed_data_t 	summed_data[HISTORY_N];
+	uint32			sum_unsupported_entries;
 } cpmonitor_db_t;
 
 extern summed_data_t * summed_data_arr;
 extern cpmonitor_db_t cpmonitor_db;
 extern cpmonitor_conf_t cpmonitor_conf;
 
+void 	ipv6_to_str(ipv6_addr_t * addr, char *buf, uint32 len);
+void 	ipv4_to_str(ipv4_addr_t addr, char *buf, uint32 len);
 struct  timeval get_end_time();
+int		calc_time_diff(struct timeval* curr, struct timeval* prev);
 void 	inc_usage(usage_t * u, int bytes);
 int 	hash_init(hash_table_t* table, int size);
 void 	hash_free(hash_table_t * table);
-hash_entry_base_t * hash_ent_get(cpmonitor_db_t * db, hash_key_union_t * key, BOOL add);
+
 int 	core_init();
 void 	core_fini();
-void 	parse_packet(void * data, int size, uint32 cap_len);
-void hash_table_inc_timeslot(cpmonitor_db_t * db, struct timeval * tv);
-void hash_ent_put_in_top_ents(cpmonitor_db_t * db, hash_entry_base_t * ent);
-void accumulate_usage(usage_t * to, usage_t * from);
-void accumulate_bidi_usage(bidi_usage_t * to, bidi_usage_t * from);
-void accumulate_tcp_stats(tcp_stats_t * to, tcp_stats_t * from);
-void get_total_usage(usage_t * u);
+void	print_unsupported_ipproto_counters();
+int 	parse_entry(void * data, int size, uint32 cap_len, struct timeval * ts, char i_o, char * if_desc, short vlan_id);
+void 	hash_table_inc_timeslot(cpmonitor_db_t * db, struct timeval * tv);
+void 	hash_ent_put_in_top_ents(cpmonitor_db_t * db, hash_entry_base_t * ent);
+void 	accumulate_usage(usage_t * to, usage_t * from);
+void 	accumulate_bidi_usage(bidi_usage_t * to, bidi_usage_t * from);
+void 	accumulate_tcp_stats(tcp_stats_t * to, tcp_stats_t * from);
+void 	get_total_usage(usage_t * u);
+hash_entry_base_t * hash_ent_get(cpmonitor_db_t * db, hash_key_union_t * key, BOOL add);
 
 __inline static uint32 bidi_total_packets(bidi_usage_t * bi_u)
 {

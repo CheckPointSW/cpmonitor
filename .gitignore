@@ -1,0 +1,10 @@
+*.o
+/*.cap
+/*.pcap
+/*.txt
+/cpmonitor_copy/*.sln
+/cpmonitor_copy/cpmonitor_copy/*.vcxproj
+/cpmonitor_copy/cpmonitor_copy/*.filters
+/*.PNG
+/*.zip
+/cpmonitor

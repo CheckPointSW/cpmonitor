@@ -22,7 +22,7 @@ INC= -I/usr/lib/glib-2.0/include -I/usr/include/glib-2.0 -I../core -I../known -I
 
 CC=gcc
 RM=rm
-CFLAGS=-g -Wall -c -D_FILE_OFFSET_BITS=64 -D__USE_LARGEFILE
+CFLAGS=-g -Werror -Wall -c -D_FILE_OFFSET_BITS=64 -D__USE_LARGEFILE
 
 all: $(OBJS)
 

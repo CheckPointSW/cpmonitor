@@ -33,7 +33,7 @@ OBJS = $(OBJS_KNOWN) $(OBJS_TPRINT) $(OBJS_PRINTER)
 INCLUDES += -I../CMpub/lib/libcore.a -I/usr/lib/glib-2.0/include -I/usr/include/glib-2.0 -I../core/ -I../known $(GLIB_FLAG)
 
 CC = gcc
-CFLAGS = -g -Wall -c -D_FILE_OFFSET_BITS=64 -D__USE_LARGEFILE
+CFLAGS = -g -Werror -Wall -c -D_FILE_OFFSET_BITS=64 -D__USE_LARGEFILE
 RM=rm
 
 # Default Target
