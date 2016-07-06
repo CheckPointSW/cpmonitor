@@ -156,6 +156,11 @@ int main(int argc, char** argv)
 	}
 	else {
 		ret = parse_args(argc, argv);
+
+#if __x86_64__
+	FPRINTF("Warning: cpmonitor does not currently support 64 bit. Please run on a 32 bit machine.\n");
+#endif
+
 		if (ret == 0) {
 			ret = dump_main();
 		}

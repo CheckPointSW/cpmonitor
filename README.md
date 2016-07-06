@@ -54,6 +54,14 @@ problem: glib is missing
 solution: install glib on the machine: install: "sudo apt-get install libglib2.0-dev"
 
 
+
+####"fatal error: pcap.h: No such file or directory"
+
+problem: libpcap is missing
+
+solution: install libpcap on the machine
+
+
 ## Third party software
 
 cpmonitor uses libpcap version 0.9.4 which is distributed under the 3-clause BSD license.

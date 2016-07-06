@@ -1396,7 +1396,7 @@ void get_maximum_usage_from_data(summed_data_t * summed_data, int from, int to, 
 {
 	int j;
 
-	memset(maximum, 0, sizeof(maximum));
+	memset(maximum, 0, sizeof(maximum_t));
 	
 	for(j = from ; j < to ; j++ ) {
 		if(summed_data[j].connections > maximum->connection) {

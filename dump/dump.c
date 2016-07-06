@@ -502,7 +502,7 @@ int read_dump_loop()
 
 		/* if (entry size) > (buffer size), skip entry */
 		if (pcap_hdr.caplen > sizeof(dump_buff)) {
-			PRINT("Warning, entry size is larger than dump_buff, skipping entry #%llu\n", entry_counter);
+			PRINT("Warning, entry size (%u) is larger than dump_buff (%u), skipping entry #%llu\n", pcap_hdr.caplen, sizeof(dump_buff), entry_counter);
 			fpos_t position;
 			if (fgetpos(cpmonitor_conf.dump_file, &position) != 0) {
 				PRINTE("fgetpos failed\n");
