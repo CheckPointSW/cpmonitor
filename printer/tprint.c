@@ -200,10 +200,10 @@ void tprint_data_add_double (TPrint *tprint, gint col, gdouble data)
 #define  P(format_, ...) *(tprint->buff_off) += g_snprintf(tprint->buff + (*tprint->buff_off), tprint->buff_len - (*tprint->buff_off), format_, ##__VA_ARGS__)
 static void tprint_print_no_borders (TPrint *tprint)
 {
-    GList *l;
-    gint row;
+    GList *l = NULL;
+    gint row = 0;
     gboolean first = TRUE;
-    gint spaces_left;
+    gint spaces_left = 0;
 
     if (tprint->show_header) {
         for (l = g_list_first (tprint->l_columns); l; l = g_list_next (l)) {

@@ -411,6 +411,7 @@ int read_dump_loop()
 	char				 i_o = '-';
 	char				 if_desc[INTERFACE_DESCRIPTION_LENGTH + 1] = {0};
 	short				 vlan_id = -1;
+	fpos_t				 position;
 
 	memset(&pcap_hdr, 0, sizeof(pcap_hdr));
 	addrs = NULL;
@@ -503,7 +504,7 @@ int read_dump_loop()
 		/* if (entry size) > (buffer size), skip entry */
 		if (pcap_hdr.caplen > sizeof(dump_buff)) {
 			PRINT("Warning, entry size (%u) is larger than dump_buff (%u), skipping entry #%llu\n", pcap_hdr.caplen, sizeof(dump_buff), entry_counter);
-			fpos_t position;
+			
 			if (fgetpos(cpmonitor_conf.dump_file, &position) != 0) {
 				PRINTE("fgetpos failed\n");
 				return (-1);

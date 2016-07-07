@@ -19,7 +19,7 @@
 #define __KNOWN_H__
 
 #define KNOWN_PORT_MAX (49000 + 1)
-#define KNOWN_ICMP_MAX 40
+#define KNOWN_ICMP_MAX 42 /* 0-41 are allocated, 42-252 are unassigned, 253-254 are RFC3692-style Experiment and 255 is Reserved */
 #define KNOWN_ICMP_UNREACH_MAX 16
 #define KNOWN_ICMP_REDIRECT_MAX 4
 #define KNOWN_ICMP_TIME_EXCEEDED_MAX 2
