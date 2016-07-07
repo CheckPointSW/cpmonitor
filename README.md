@@ -22,7 +22,7 @@ cpmonitor shows top connections, services and hosts per second, and allows you t
       -o     : create output file <output.txt> for the report
       -g     : create a timeline graph and print to <graph.csv>
       -t     : print the entire tables to <name>_<table name>.csv (for example: <name>_conns.csv)
-      -s     : set top entities sorting method, <method> 'p' for packet sorting(default) or 't' fot throghput sorting
+      -s     : set top entities sorting method, <method> 'p' for packet sorting (default) or 't' for throghput sorting
       -c     : connection table size (number of entries the connection table can hold, an integer, default is 10,000,000)
 
 
