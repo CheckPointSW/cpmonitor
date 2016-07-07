@@ -32,8 +32,8 @@ void usage() {
 			"  -o     : create output file <output.txt> for the report\n"
 			"  -g     : create a timeline graph and print to <graph.csv>\n"
 			"  -t     : print the entire tables to <name>_<table name>.csv (for example: <name>_conns.csv)\n"
-			"  -s     : set top entities sorting method, <method> 'p' for packet sorting(default) or 't' fot throghput sorting\n"
-			"  -c     : connection table size (an integer, defaut is 10k)\n\n  "
+			"  -s     : set top entities sorting method, <method> 'p' for packet sorting (default) or 't' for throughput sorting\n"
+			"  -c     : connection table size (number of entries the connection table can hold, an integer, default is 10,000,000)\n\n  "
 		);		
 }
 
