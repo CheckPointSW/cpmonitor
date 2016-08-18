@@ -18,22 +18,26 @@
 #include "dump.h"
 #include <pcap.h>
 
+#define MAX_CONN_TABLE_SIZE	200000000
+
+static BOOL is_exit_after_parse_args = FALSE;
 
 void usage() {
 	/* [-d] flag is available as well, but intended for debug only so it is unofficial */
 	/* [-i <interval>] flag was removed since it wasn't used (probably was left over from the kernel mode) */
 	PRINTF(
-			"Analyzing dump files mode usage:\n"
-			"  cpmonitor [ flags ] <dump_file_name>\n"
-			"Available flags: [-v] [-q] [-n] [-o <output.txt>] [-g <graph.csv>] [-t <name>] [-s <method>] [-c <connection table size>]\n"
-			"  -v     : verbose\n"
-			"  -q     : quiet, no stdout, only print to output file(s)\n"
-			"  -n     : navigate through dump file\n"
-			"  -o     : create output file <output.txt> for the report\n"
-			"  -g     : create a timeline graph and print to <graph.csv>\n"
-			"  -t     : print the entire tables to <name>_<table name>.csv (for example: <name>_conns.csv)\n"
-			"  -s     : set top entities sorting method, <method> 'p' for packet sorting (default) or 't' for throughput sorting\n"
-			"  -c     : connection table size (number of entries the connection table can hold, an integer, default is 10,000,000)\n\n  "
+			"\ncpmonitor usage:\n"
+			"  cpmonitor [ flags ] <name_of_traffic_dump_file>\n"
+			"  cpmonitor [-v] [-q] [-n] [-o <output>] [-g <graph>] [-t <name>] [-s <p | t>] [-c <connection table size>] <name_of_traffic_dump_file>\n"
+			"  -v						Verbose mode\n"
+			"  -q						Quiet mode, no output on stdout, prints only to output file(s)\n"
+			"  -n						Navigates through dump file\n"
+			"  -o </path_to/output>				Creates output file </path_to/output>.txt for the report\n"
+			"  -g </path_to/graph>				Creates a timeline graph and prints it to </path_to/graph>.csv\n"
+			"  -t <name>					Prints the entire tables to </path_to/name>_<table_name>.csv (e.g.: </path_to/name>_conns.csv)\n"
+			"  -s <p | t>					Sets sorting method for top entities: p - for packet sorting (default), t - for throughput sorting\n"
+			"  -c <Size of Connections Table>		Sets size of Connections Table - an integer number of entries that the Connections Table can hold (default is 10,000,000, max is 200,000,000)\n"
+			"  </path_to/name_of_traffic_dump_file>		Path to the traffic capture file to be analyzed\n\n\n"
 		);		
 }
 
@@ -70,6 +74,13 @@ int parse_args(int argc, char** argv)
 			case 'o':
 				cpmonitor_conf.report_name = optarg;
 				PRINTV("parse_args: -o %s\n", cpmonitor_conf.report_name);
+				if (0 != open_file(NULL, cpmonitor_conf.report_name, "txt", &cpmonitor_conf.report_file)) {
+					PRINTE("Failed opening the output file.\n\n\n");
+					return (-1);
+				}
+				else {
+					is_report_file_open = TRUE;
+				}
 				break;
 			/* timeline graph */
 			case 'g':
@@ -89,7 +100,7 @@ int parse_args(int argc, char** argv)
 					PRINTV("parse_args: -s t\n");
 				}
 				else {
-					PRINTE("Invalid sort method (p for packets, t for throughput)\n");
+					PRINTE("Invalid sort method (p for packets, t for throughput)\n\n\n");
 					return (-1);
 				}
 				break;
@@ -103,9 +114,9 @@ int parse_args(int argc, char** argv)
 			case 'c':
 			{
 				cpmonitor_conf.connection_table_size = atol(optarg);
-				if (cpmonitor_conf.connection_table_size <= 0) 
+				if ((cpmonitor_conf.connection_table_size <= 0) || (cpmonitor_conf.connection_table_size > MAX_CONN_TABLE_SIZE))
 				{
-					PRINTE("Error with the connection table size %d\n", cpmonitor_conf.connection_table_size);
+					PRINTE("Invalid connection table size\n");
 					usage();
 					return (-1);
 				}
@@ -114,9 +125,10 @@ int parse_args(int argc, char** argv)
 			}
 			/* help/default */
 			default:
-				PRINTE("Error with the argument '%s'\n", optarg);
+				PRINTE("Invalid argument '%s'\n", optarg);
 		 	case 'h':
 		 	case '?':
+				is_exit_after_parse_args = TRUE;
 				PRINTV("parse_args: -?\n");	
 				usage();
 				return 0;
@@ -129,16 +141,16 @@ int parse_args(int argc, char** argv)
 		PRINTV("parse_args: dump_name: %s\n", cpmonitor_conf.dump_name);
     } else {
 	    if (argc - optind == 0) {
-	    	PRINTE("dump name is missing\n");
+			PRINTE("dump name is missing\n\n\n");
 	    } else {
-			PRINTE("too many arguments\n");			
+			PRINTE("too many arguments\n\n\n");
 		}
 		return (-1);
     }
 
 	if (cpmonitor_conf.report_name == NULL && cpmonitor_conf.graph_name == NULL && cpmonitor_conf.table_file_prefix_name == NULL && cpmonitor_conf.quiet == 1)
 	{
-		PRINTE("-q and no output file(s) don't go together\n");
+		PRINTE("-q and no output file(s) don't go together\n\n\n");
 		usage();
 		return (-1);
 	}
@@ -155,13 +167,14 @@ int main(int argc, char** argv)
 		usage();
 	}
 	else {
+		is_report_file_open = FALSE;
 		ret = parse_args(argc, argv);
 
 #if __x86_64__
-	FPRINTF("Warning: cpmonitor does not currently support 64 bit. Please run on a 32 bit machine.\n");
+	PRINT("Warning: cpmonitor does not currently support 64 bit. Please run on a 32 bit machine.\n");
 #endif
 
-		if (ret == 0) {
+		if ((ret == 0) && (!is_exit_after_parse_args)) {
 			ret = dump_main();
 		}
 	}

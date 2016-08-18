@@ -53,10 +53,10 @@
 
 #define FORMAT_MAC_ADDR_LEN		18	/* 12 digits + 5 colons + null terminator */
 
-
 static char dump_buff[64*1024] = {0};
 static int last_dump_time = 0;
-static uint64 entry_counter = 0;
+uint64 entry_counter;
+
 /* debug counters */
 static uint64 ether_type_counter = 0;
 static uint64 ARP_counter = 0;
@@ -88,7 +88,7 @@ int read_dump_header() {
 				PRINTV("dump type = tcpdump (big endian)\n");
 				break;
 			default:
-				PRINTE("Unknown tcpdump type\n");
+				PRINTE("Unknown tcpdump type\n\n\n");
 				return (-1);
 		}
 	}
@@ -104,7 +104,7 @@ int read_dump_header() {
 			fread(dump_buff+8 , 1, sizeof(*snoop_hdr) - 8, cpmonitor_conf.dump_file);
 			break;
 		default:
-			PRINTE("Unknown dump type\n");
+			PRINTE("Unknown dump type\n\n\n");
 			return (-1);
 	}
 
@@ -132,7 +132,7 @@ int read_dump_header() {
 			break;
 		}
 		default:
-			PRINTE("Unknown dump type\n");
+			PRINTE("Unknown dump type\n\n\n");
 			return (-1);
 	}
 	
@@ -174,13 +174,13 @@ int read_dump_header() {
 					cpmonitor_conf.linklen = sizeof(ether_header_t);
 					break;
 				default:
-					PRINTE("snoop datalink type %d not supported\n", snoop_hdr->datalink_t);
+					PRINTE("snoop datalink type %d not supported\n\n\n", snoop_hdr->datalink_t);
 					return (-1);
 			}
 
 			break;
 		default:
-			PRINTE("Unknown dump type\n");
+			PRINTE("Unknown dump type\n\n\n");
 			return (-1);
 	}
 
@@ -229,25 +229,25 @@ void close_files()
 	close_file(&cpmonitor_conf.table_total_usage_file);
 }
 
-int open_file(const char* file_name_prefix, const char* file_name, FILE** file_ptr)
+int open_file(const char* file_name_prefix, const char* file_name, const char* file_ext, FILE** file_ptr)
 {
 	int ret = -1;
 	char csv_name[1024] = {0};
 
 	if (file_name == NULL) {
-		PRINTE("open_file: bad agument - file name is NULL\n");
+		PRINTE("open_file: bad agument - file name is NULL\n\n\n");
 	}
 	else {
 		if (file_name_prefix == NULL) {
-			snprintf(csv_name, sizeof(csv_name), "%s.csv", file_name);
+			snprintf(csv_name, sizeof(csv_name), "%s.%s", file_name, file_ext);
 		}
 		else {
-			snprintf(csv_name, sizeof(csv_name), "%s_%s.csv", file_name_prefix, file_name);
+			snprintf(csv_name, sizeof(csv_name), "%s_%s.%s", file_name_prefix, file_name, file_ext);
 		}
 
 		*file_ptr = fopen(csv_name, "w");
 		if (*file_ptr == NULL) {
-			PRINTE("failed to open %s file\n", file_name);
+			PRINTE("failed to open %s file\n\n\n", file_name);
 		}
 		else {
 			ret = 0;
@@ -257,28 +257,29 @@ int open_file(const char* file_name_prefix, const char* file_name, FILE** file_p
 	return ret;
 }
 
+int open_table_file(const char* file_name, FILE** file_ptr)
+{
+	return open_file(cpmonitor_conf.table_file_prefix_name, file_name, "csv", file_ptr);
+}
+
 int open_files()
 {
 	int ret = 0;
 
-	if (cpmonitor_conf.report_name) {
-		if (0 != open_file(NULL, cpmonitor_conf.report_name, &cpmonitor_conf.report_file)) {
-			ret = -1;
-		}
-	}
-
 	if ((ret == 0) && cpmonitor_conf.graph_name) {
-		if (0 != open_file(NULL, cpmonitor_conf.graph_name, &cpmonitor_conf.graph_file)) {
+		if (0 != open_file(NULL, cpmonitor_conf.graph_name, "csv", &cpmonitor_conf.graph_file)) {
+			PRINTE("Failed opening the graph file.\n\n\n");
 			ret = -1;
 		}
 	}
 
 	if ((ret == 0) && cpmonitor_conf.table_file_prefix_name) {
-		if ((0 != open_file(cpmonitor_conf.table_file_prefix_name, "conns", &cpmonitor_conf.table_conns_file))			||
-			(0 != open_file(cpmonitor_conf.table_file_prefix_name, "hosts", &cpmonitor_conf.table_hosts_file))			||
-			(0 != open_file(cpmonitor_conf.table_file_prefix_name, "services", &cpmonitor_conf.table_services_file))		||
-			(0 != open_file(cpmonitor_conf.table_file_prefix_name, "total_usage", &cpmonitor_conf.table_total_usage_file))) {
+		if ((0 != open_table_file("conns", &cpmonitor_conf.table_conns_file))			||
+			(0 != open_table_file("hosts", &cpmonitor_conf.table_hosts_file))			||
+			(0 != open_table_file("services", &cpmonitor_conf.table_services_file))		||
+			(0 != open_table_file("total_usage", &cpmonitor_conf.table_total_usage_file))) {
 
+				PRINTE("Failed opening the tables' files.\n\n\n");
 				ret = -1;
 		}
 	}
@@ -308,7 +309,9 @@ void get_interface_list()
 	struct ifaddrs * ifaptr = NULL;
 	struct sockaddr_ll * s = NULL;
 
-	FPRINTF("Complete interface list of current machine:\n");
+	PRINT("======================================\n");
+	PRINTD("\n");
+	PRINT("Complete interface list of current machine:\n");
 
 	getifaddrs(&addrs);
 
@@ -317,11 +320,12 @@ void get_interface_list()
 			s = (struct sockaddr_ll*)(ifaptr)->ifa_addr;
 			sprintf(buf, "%02x:%02x:%02x:%02x:%02x:%02x", s->sll_addr[0], s->sll_addr[1], s->sll_addr[2], s->sll_addr[3], s->sll_addr[4], s->sll_addr[5]);
 
-			FPRINTF("interface name: %s, mac address: %s\n", ifaptr->ifa_name, buf);
+			PRINT("interface name: %s, mac address: %s\n", ifaptr->ifa_name, buf);
 		}
 	}
 
 	freeifaddrs(addrs);
+	PRINT("======================================\n");
 }
 
 void get_interface_data(char* entry, char* i_o, char* if_desc)
@@ -350,10 +354,10 @@ void print_MAC_addr()
 			memset(src_mac_addr, 0, sizeof(src_mac_addr));
 			/* add zero padding on the left */
 			sprintf(src_mac_addr, "%02X:%02X:%02X:%02X:%02X:%02X", a,b,c,d,e,f);
-			FPRINTF("MAC addr: %s | ", src_mac_addr);
+			PRINT("MAC addr: %s | ", src_mac_addr);
 		}
 		else {
-			FPRINTF("MAC addr: %s | ", src_mac_addr_no_padding);
+			PRINT("MAC addr: %s | ", src_mac_addr_no_padding);
 		}
 	}
 }
@@ -380,13 +384,16 @@ void summerize_timeslot_and_inc(struct timeval* curr, int* second_parsed)
 
 void print_debug_counters()
 {
+	PRINT("======================================\n");
+	PRINTD("\n");
 	print_unsupported_ipproto_counters();
-	FPRINTF("num of formally dropped entries: %d\n", cpmonitor_db.sum_unsupported_entries);
-	FPRINTF("Total num of enteries: %llu\n", entry_counter);
-	FPRINTF("num of ether_type: %llu\n", ether_type_counter);
-	FPRINTF("num of ARP: %llu\n", ARP_counter);
-	FPRINTF("num of layer 2: %llu\n", layer_2_counter);
-	FPRINTF("num of non ip: %llu\n", non_ip_counter);
+	PRINT("num of ether_type: %llu\n", ether_type_counter);
+	PRINT("num of ARP: %llu\n", ARP_counter);
+	PRINT("num of layer 2: %llu\n", layer_2_counter);
+	PRINT("num of non ip: %llu\n", non_ip_counter);
+	PRINT("Total num of enteries: %llu\n", entry_counter);
+	PRINT("num of formally dropped entries: %d\n", cpmonitor_db.sum_unsupported_entries);
+	PRINT("======================================\n");
 }
 
 int read_dump_loop()
@@ -414,6 +421,7 @@ int read_dump_loop()
 	fpos_t				 position;
 
 	memset(&pcap_hdr, 0, sizeof(pcap_hdr));
+	entry_counter = 0;
 	addrs = NULL;
 
 	if (cpmonitor_conf.debug) {
@@ -434,8 +442,6 @@ int read_dump_loop()
 	}
 
 	PRINTV("Starting read_dump_loop (of size %llu)\n", file_size);
-	/* for second counter*/
-	PRINTF("\n");
 	while (!feof(cpmonitor_conf.dump_file)) {
 		if(second_parsed >= DAEMON_HISTORY_N) {
 			break;
@@ -462,7 +468,7 @@ int read_dump_loop()
 		if (cpmonitor_conf.verbose) {
 			curr_file_ptr = ftello(cpmonitor_conf.dump_file);
 			if (curr_file_ptr < 0) {
-				PRINTE("the dump '%s' is corrupted\n", cpmonitor_conf.dump_name);
+				PRINTE("the dump '%s' is corrupted\n\n\n", cpmonitor_conf.dump_name);
 				return (-1);
 			}
 			else if (curr_file_ptr > (file_size)*(percent/10.0)) {
@@ -477,7 +483,7 @@ int read_dump_loop()
 		/* read dump entry header */
 		if (fread(dump_entry_hdr_ptr, 1, dump_entry_hdr_len, cpmonitor_conf.dump_file) != dump_entry_hdr_len) {
 			if (feof(cpmonitor_conf.dump_file)) break;
-			PRINTE("fread pkt_hdr - while reading the dump '%s' at entry (#%llu)\n", cpmonitor_conf.dump_name, entry_counter);
+			PRINTE("fread pkt_hdr - while reading the dump '%s' at entry (#%llu)\n\n\n", cpmonitor_conf.dump_name, entry_counter);
 			return (-1);
 		}
 		
@@ -506,12 +512,12 @@ int read_dump_loop()
 			PRINT("Warning, entry size (%u) is larger than dump_buff (%u), skipping entry #%llu\n", pcap_hdr.caplen, sizeof(dump_buff), entry_counter);
 			
 			if (fgetpos(cpmonitor_conf.dump_file, &position) != 0) {
-				PRINTE("fgetpos failed\n");
+				PRINTE("fgetpos failed\n\n\n");
 				return (-1);
 			}
 			position.__pos += pcap_hdr.caplen;
 			if (fsetpos(cpmonitor_conf.dump_file, &position) != 0) {
-				PRINTE("fsetpos failed\n");
+				PRINTE("fsetpos failed\n\n\n");
 				return (-1);
 			}
 			continue;
@@ -519,7 +525,7 @@ int read_dump_loop()
 			
 		if (fread(dump_buff, 1, pcap_hdr.caplen, cpmonitor_conf.dump_file) != pcap_hdr.caplen) {
 			if (feof(cpmonitor_conf.dump_file)) break;
-			PRINTE("fread entry - while reading the dump '%s' at entry (#%llu)\n", cpmonitor_conf.dump_name, entry_counter);
+			PRINTE("fread entry - while reading the dump '%s' at entry (#%llu)\n\n\n", cpmonitor_conf.dump_name, entry_counter);
 			return (-1);
 		}
 		entry = dump_buff;
@@ -618,7 +624,7 @@ int read_dump_loop()
 		pcap_hdr.caplen -= cpmonitor_conf.linklen + vlan_hdr_len;
 
 		if (pcap_hdr.len < 0 || pcap_hdr.caplen < 0) {
-			PRINTE("Negative length\n");
+			PRINTE("Negative length\n\n\n");
 			return (-1);
 		}
 
@@ -657,20 +663,21 @@ int dump_main()
 {
 	int ret = -1;
 
-	PRINTD("in dump_main\n");
+	PRINTD("Trying to allocate summed_data_arr.\n");
 	summed_data_arr = MALLOC(sizeof(*summed_data_arr)*DAEMON_HISTORY_N);
 	if (summed_data_arr == NULL) {
-		PRINTE("MALLOC failed!\n");
+		PRINTE("MALLOC failed!\n\n\n");
 		goto cleanup;
 	}
+	PRINTD("Allocation of summed_data_arr succeeded.\n");
 	
  	if (cpmonitor_conf.dump_name == NULL) {
-		PRINTE("no dump file requested.\n");
+		PRINTE("no dump file requested.\n\n\n");
 		goto cleanup;
  	}
 	cpmonitor_conf.dump_file = fopen(cpmonitor_conf.dump_name, "rb"); /*read binary*/
 	if (!cpmonitor_conf.dump_file) {
-		PRINTE("failed opening %s (%s)\n", cpmonitor_conf.dump_name, strerror(errno));
+		PRINTE("failed opening %s (%s)\n\n\n", cpmonitor_conf.dump_name, strerror(errno));
 		goto cleanup;
 	}	
 

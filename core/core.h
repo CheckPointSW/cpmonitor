@@ -26,8 +26,12 @@
 #include "network_types.h"
 #include <netinet/ether.h>
 
-void * do_malloc(int sz, const char *file, int line);
-void do_free(void * ptr, const char* file, int line);
+typedef int BOOL;
+#define TRUE 1
+#define FALSE 0
+
+void * do_malloc(uint32 sz, const char * file, int line);
+void do_free(void * ptr, const char * file, int line);
 
 #define MALLOC(sz) do_malloc(sz, __FILE__, __LINE__)
 #define FREE(ptr) do_free(ptr, __FILE__, __LINE__)
@@ -38,43 +42,52 @@ void do_free(void * ptr, const char* file, int line);
 
 void do_print_leaks(void);
 
-
 #define HZ 	1000 /* defines the timestep (1000 jiffies is 1 second, I think)*/
-#define PRINTD(...) \
-	do { \
-		if (cpmonitor_conf.debug) { FPRINTF(__VA_ARGS__); } \
-	} while (0)
-#define VERB_STR "Verbose: "
-#define PRINTV(...) \
-	do { \
-		if (cpmonitor_conf.verbose) { PRINT(VERB_STR __VA_ARGS__); } \
-	} while (0)
-#define PRINTE(...) \
-	do { \
-		PRINT("Error: %s:%d:%s(): ", __FILE__, __LINE__, __func__);\
-        PRINT(__VA_ARGS__); \
-	} while (0)
-#define FPRINT(_f, ...) fprintf(_f, __VA_ARGS__)
+
+/* Print to stdout */
+#define PRINTF(...) if (!cpmonitor_conf.quiet) printf(__VA_ARGS__);
+/* Print to report file */
+#define FPRINTF(...) if (is_report_file_open) fprintf(cpmonitor_conf.report_file, __VA_ARGS__);
+/* Print to stdout and report file */
 #define PRINT(...) \
 	do { \
-		if (!cpmonitor_conf.quiet) { printf("%s: ", __func__); \
-									 printf(__VA_ARGS__);} \
-		if (cpmonitor_conf.report_file) fprintf(cpmonitor_conf.report_file, __VA_ARGS__); \
-	}while (0)
-
-#define PRINTF(...) if (!cpmonitor_conf.quiet) printf(__VA_ARGS__);
-#define FPRINTF(...) \
-	do { \
 		PRINTF(__VA_ARGS__); \
-		if (cpmonitor_conf.report_file) fprintf(cpmonitor_conf.report_file, __VA_ARGS__); \
+		FPRINTF(__VA_ARGS__); \
 	}while (0)
-
+/* Debug prints to stdout and report file with additional info of calling file name, line number and function name */
+#define DBG_TAG "[Debug] "
+#define DBG_STR "[%s: %d: %s()] "
+#define PRINTD(...) \
+	do { \
+		if (cpmonitor_conf.debug) { PRINT(DBG_TAG); \
+									PRINT(DBG_STR, __FILE__, __LINE__, __func__); \
+									PRINT(__VA_ARGS__); } \
+	} while (0)
+/* Vebose prints to stdout and report file with additional info of the name of the calling function */
+#define VRB_TAG "[Verbose] "
+#define VRB_STR "[%s()] "
+#define PRINTV(...) \
+	do { \
+		if (cpmonitor_conf.verbose) { PRINT(VRB_TAG); \
+									  PRINT(VRB_STR, __func__); \
+									  PRINT(__VA_ARGS__); } \
+	} while (0)
+/* Error prints to stdout and report file with additional info depending on the value of debug and verbose flags */
+#define ERR_TAG "[Error] "
+#define PRINTE(...) \
+	do { \
+		PRINT(ERR_TAG); \
+		if (cpmonitor_conf.debug) { PRINT(DBG_STR, __FILE__, __LINE__, __func__); } \
+		else if (cpmonitor_conf.verbose) { PRINT(VRB_STR, __func__); } \
+        PRINT(__VA_ARGS__); \
+	} while (0)
 
 typedef union {
 	ipv4_addr_t ipv4;
 	ipv6_addr_t ipv6;
 } ip_union_t;
 
+#define IP_BUFF_SIZE					40
 
 #define IPV4_LEN(ip_hdr)				(ntohs(((ipv4hdr_t *) (ip_hdr))->ip_len))
 #define IPV6_LEN(ip_hdr)				(ntohs(((ipv6hdr_t *) (ip_hdr))->ip6_plen))
@@ -112,8 +125,6 @@ typedef union {
 #define TCPHDR_LEN(tcp_hdr)				(tcp_hdr->th_off>>2)
 #define TCPDATA(tcp_hdr)				((char*) (tcp_hdr + TCPHDR_LEN(tcp_hdr)))
 
-
-
 /* our structs */
 
 /* table of valid flag combinations - from nf_conntrack_proto_tcp.c (only added FIN_ACK */
@@ -126,8 +137,6 @@ typedef struct {
 	uint32 invalid;	
 } tcp_stats_t;
 
-
-
 enum pkt_len_e{
 	pkt_len_64,
 	pkt_len_128,
@@ -139,7 +148,6 @@ enum pkt_len_e{
 	pkt_len_jumbo,
 	pkt_len_num_elems
 };
-
 
 typedef struct {
 	uint64  bytes;
@@ -163,7 +171,6 @@ typedef enum {
 	nsec = 3
 } dump_type_t;
 
-
 typedef struct listen_dev_t {
 	struct net_device * device;
 	struct listen_dev_t *next;
@@ -174,11 +181,6 @@ typedef enum {
 	sort_method_throughput = 1,
 	sort_method_unknown =2
 } sort_method_t;
-
-
-typedef int BOOL;
-#define TRUE 1
-#define FALSE 0
 
 typedef struct {
 	uint32 			connection_table_size; 		/* default is 10,000,000 */
@@ -361,9 +363,9 @@ typedef struct hash_entry_base_s {
 
 typedef struct {
 	hash_entry_base_t ** hash;
-	uint32 				size; 	/*the array size*/
-	uint32 				count; 	/*the number of elements currently in*/
-	hash_entry_base_t * expire_ring[HISTORY_N]; 
+	uint32 				 capacity; 	/* hash table size (number of entries the connection table can hold) */
+	uint32 				 count; 	/* the number of elements currently in */
+	hash_entry_base_t *  expire_ring[HISTORY_N];
 } hash_table_t;
 
 
@@ -371,7 +373,6 @@ typedef struct {
 	usage_t 		total_usage;
 	hash_table_t 	hash_table;
 	int 			current_expire_index;
-	int				num_of_hash_overflows;
 	summed_data_t 	summed_data[HISTORY_N];
 	uint32			sum_unsupported_entries;
 } cpmonitor_db_t;
@@ -379,13 +380,14 @@ typedef struct {
 extern summed_data_t * summed_data_arr;
 extern cpmonitor_db_t cpmonitor_db;
 extern cpmonitor_conf_t cpmonitor_conf;
+extern BOOL is_report_file_open;
 
 void 	ipv6_to_str(ipv6_addr_t * addr, char *buf, uint32 len);
 void 	ipv4_to_str(ipv4_addr_t addr, char *buf, uint32 len);
 struct  timeval get_end_time();
 int		calc_time_diff(struct timeval* curr, struct timeval* prev);
 void 	inc_usage(usage_t * u, int bytes);
-int 	hash_init(hash_table_t* table, int size);
+int 	hash_init(hash_table_t* table, uint32 size);
 void 	hash_free(hash_table_t * table);
 
 int 	core_init();

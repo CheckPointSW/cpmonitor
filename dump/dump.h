@@ -117,6 +117,7 @@ typedef struct {
 
 struct ifaddrs * addrs; /* for debug prints */
 
+int open_file(const char* file_name_prefix, const char* file_name, const char* file_ext, FILE** file_ptr);
 int dump_main();
 
 #endif

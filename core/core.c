@@ -20,6 +20,7 @@
 
 summed_data_t *	summed_data_arr;
 cpmonitor_db_t 	cpmonitor_db;
+BOOL is_report_file_open;
 
 cpmonitor_conf_t cpmonitor_conf = { 
 	.timestep = 				HZ,
@@ -28,8 +29,8 @@ cpmonitor_conf_t cpmonitor_conf = {
 
 
 typedef enum {
-	MALLOC_HEADER_TYPE_REGULAR = 1,
-	MALLOC_HEADER_TYPE_VIRTUAL = 2,	
+	MALLOC_HEADER_TYPE_UNDER_4K = 1,
+	MALLOC_HEADER_TYPE_OVER_4K = 2,
 } malloc_header_type;
 
 typedef struct {
@@ -42,19 +43,13 @@ struct allocation_s {
 	struct allocation_s *next;
 	const char *file;
 	int line;
-	int size;
+	uint32 size;
 	void *ptr;
 };
 static struct allocation_s all_allocations;
 #endif
 
-static int total_allocations = 0;
-
-
-#define REGULAR_ALLOC(sz)  malloc(sz)
-#define REGULAR_FREE(ptr)  free(ptr)
-#define REGULAR_VALLOC(sz) REGULAR_ALLOC(sz)
-#define REGULAR_VFREE(ptr) REGULAR_FREE(ptr)
+static uint32 total_allocations = 0;
 
 static uint32 pkt_len[pkt_len_num_elems] = {64,
 	128,
@@ -79,26 +74,31 @@ static int small_esphdr_t = 0;
 static int small_sctphdr_t = 0;
 static int unsupported_ipproto = 0;
 
-void * do_malloc(int sz, const char *file, int line)
+void * do_malloc(uint32 sz, const char * file, int line)
 {
-	void *ptr;
-	malloc_header_t hdr;
-
-	hdr.size = sz;
-	sz += sizeof(hdr);
-
-	if (UNLIKELY(sz > 4096)) {
-		hdr.type = MALLOC_HEADER_TYPE_VIRTUAL;
-		ptr = REGULAR_VALLOC(sz);
-	}
-	else {
-		hdr.type = MALLOC_HEADER_TYPE_REGULAR;
-		ptr = REGULAR_ALLOC(sz);
-	}
-
-	if (LIKELY(ptr != NULL)) {
 #ifdef LEAK_DEBUG
-		struct allocation_s *curr = REGULAR_ALLOC(sizeof(*curr));
+	struct allocation_s *curr = malloc(sizeof(*curr));
+#endif
+
+	void * ptr = NULL;
+	malloc_header_t hdr;
+	short hdr_size = sizeof(hdr);
+
+	memset(&hdr, 0, hdr_size);
+	sz += hdr_size;
+
+	ptr = malloc(sz);
+	if (LIKELY(ptr != NULL)) {
+		hdr.size = sz;
+
+		if (UNLIKELY(sz > 4096)) {
+			hdr.type = MALLOC_HEADER_TYPE_OVER_4K;
+		}
+		else {
+			hdr.type = MALLOC_HEADER_TYPE_UNDER_4K;
+		}
+
+#ifdef LEAK_DEBUG
 		if (curr) {
 			curr->file = file;
 			curr->line = line;
@@ -112,16 +112,22 @@ void * do_malloc(int sz, const char *file, int line)
 		}
 #endif
 		total_allocations += hdr.size;
-		memcpy(ptr, &hdr, sizeof(hdr));
+		memset(ptr, 0, sz);
+		memcpy(ptr, &hdr, hdr_size);
 		ptr = ((malloc_header_t *)ptr) + 1;
 	}
 
 	return ptr;
 }
 
-void do_free(void * ptr, const char* file, int line)
+void do_free(void * ptr, const char * file, int line)
 {
-	malloc_header_t* hdr;
+#ifdef LEAK_DEBUG
+	struct allocation_s *curr = NULL;
+	struct allocation_s *prev = NULL;
+#endif
+
+	malloc_header_t* hdr = NULL;
 
 	if (UNLIKELY(ptr == NULL)) {
 		PRINT("NULL free at %s:%d", file, line);
@@ -131,20 +137,15 @@ void do_free(void * ptr, const char* file, int line)
 	hdr = ((malloc_header_t *)ptr) - 1;
 	total_allocations -= hdr->size;
 
-	if (UNLIKELY(hdr->type == MALLOC_HEADER_TYPE_VIRTUAL)) {
-		REGULAR_VFREE(hdr);
-	}
-	else {
-		REGULAR_FREE(hdr);
-	}
+	free(hdr);
 
 #ifdef LEAK_DEBUG
-	struct allocation_s *curr = all_allocations.next;
-	struct allocation_s *prev = &all_allocations;
+	curr = all_allocations.next;
+	prev = &all_allocations;
 	while (curr) {
 		if (curr->ptr == hdr) {
 			prev->next = curr->next;
-			REGULAR_FREE(curr);
+			free(curr);
 			goto found;
 		}
 		else {
@@ -167,7 +168,7 @@ void do_print_leaks(void)
 	while(curr) {
 		struct allocation_s *next = curr->next;
 		PRINT("Leaked %d bytes from %s:%d\n", curr->size, curr->file, curr->line);
-		REGULAR_FREE(curr);
+		FREE(curr);
 		curr = next;
 	}
 #endif
@@ -502,7 +503,7 @@ void move_to_current_expire_list(cpmonitor_db_t * db, hash_entry_base_t * ent)
 hash_entry_base_t * hash_ent_get(cpmonitor_db_t * db, hash_key_union_t * key, BOOL add)
 {
 
-	uint32 hash = cpmonitor_hash_func(key, db->hash_table.size);
+	uint32 hash = cpmonitor_hash_func(key, db->hash_table.capacity);
 	hash_entry_base_t * ent = NULL;
 
 #ifdef DEBUG
@@ -514,8 +515,8 @@ hash_entry_base_t * hash_ent_get(cpmonitor_db_t * db, hash_key_union_t * key, BO
 		PRINTE("hash == -1\n");
 		return NULL;		
 	}
-	if (db->hash_table.size <= hash ) {
-		PRINTE("fivetuple_hash_table.size (%d) <= hash (%d)\n", db->hash_table.size, hash);
+	if (db->hash_table.capacity <= hash ) {
+		PRINTE("fivetuple_hash_table.capacity (%d) <= hash (%d)\n", db->hash_table.capacity, hash);
 		return NULL;
 	}
 #endif
@@ -533,11 +534,11 @@ hash_entry_base_t * hash_ent_get(cpmonitor_db_t * db, hash_key_union_t * key, BO
 		if (LIKELY(db->hash_table.count < (cpmonitor_conf.connection_table_size * 10))) {
 			ent = (hash_entry_base_t *) MALLOC(sizeof(*ent) + hash_key_size(key->key_type));
 			if (ent == NULL) {
+				PRINTE("MALLOC failed allocating a new entry in the table.\n\n\n");
 				return NULL;
 			}
 		} else {
-			db->num_of_hash_overflows++;
-			PRINTE("hash_overflows: db->num_of_hash_overflows == %d\n", db->num_of_hash_overflows);
+			PRINTE("Exceeded the desired table size. Please re-run the tool and use -c flag to allocate more memory for the table.\n\n\n");
 			return NULL;
 		}	
 
@@ -569,13 +570,18 @@ hash_entry_base_t * hash_ent_get(cpmonitor_db_t * db, hash_key_union_t * key, BO
 }
 
 
-int hash_init(hash_table_t* table, int size) 
+int hash_init(hash_table_t* table, uint32 size)
 {
+	uint32 hash_allocation_size = 0;
+	short hash_struct_size = sizeof(table->hash);
 
 	memset(table, 0, sizeof(*table));
 
 	do {
-		table->hash = (hash_entry_base_t **) MALLOC(size * sizeof(table->hash));
+		hash_allocation_size = size * hash_struct_size;
+		PRINTD("Hash struct size is: %d, wanted num of entries in the table: %d, requested allocation size: %d\n", hash_struct_size, size, hash_allocation_size);
+
+		table->hash = (hash_entry_base_t **)MALLOC(hash_allocation_size);
 		if (table->hash != NULL) {
 			break;
 		}
@@ -584,22 +590,23 @@ int hash_init(hash_table_t* table, int size)
 	} while (size > 10000);
 
 	if (table->hash == NULL) {
-		PRINTE("failed to alloc hash_table_t (size %d)\n", size);
+		PRINTE("failed to alloc hash_table_t (size %d)\n\n\n", size);
 		return -1;
 	}
 
-	memset(table->hash, 0, size * sizeof(table->hash));
-	table->size = size;
+	PRINTD("Successfully allocated %d bytes for hash table\n", hash_allocation_size);
+	memset(table->hash, 0, hash_allocation_size);
+	table->capacity = size;
 	return 0;
 }
 
 void hash_free(hash_table_t * table) 
 {
-	uint32 i;
-	hash_entry_base_t * ent;
-	hash_entry_base_t * tmp;
+	uint32 i = 0;
+	hash_entry_base_t * ent = NULL;
+	hash_entry_base_t * tmp = NULL;
 
-	for (i=0; i < table->size; i++) {
+	for (i = 0 ; i < table->capacity ; i++) {
 		ent = table->hash[i];
 		while (ent != NULL) {
 			tmp = ent;
@@ -855,8 +862,8 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 	hash_key_union_t 	service;
 	direction_t  		dir = C2S;
 	BOOL				is_error = FALSE;
-	char 				src_ip_buff[40] = {0};
-	char 				dst_ip_buff[40] = {0};
+	char 				src_ip_buff[IP_BUFF_SIZE] = {0};
+	char 				dst_ip_buff[IP_BUFF_SIZE] = {0};
 
 	memset(&conn, 0, sizeof(conn));
 	memset(&host, 0, sizeof(host));	
@@ -891,7 +898,7 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 	}
 
 	if (ent == NULL) {
-		PRINTE("got NULL from conn\n");
+		PRINTD("Failed acquiring connection entry from the table.\n");
 		is_error = TRUE;
 	}
 	else {
@@ -900,7 +907,7 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 		/* host */
 		ent = hash_ent_get(&cpmonitor_db, &host, TRUE);
 		if (ent == NULL) {
-			PRINTE("got NULL from host\n");
+			PRINTD("Failed acquiring host entry from the table.\n");
 			is_error = TRUE;
 		}
 		else {
@@ -910,7 +917,7 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 			service_creator(&service, proto, sport, dport, size, dir);
 			ent = hash_ent_get(&cpmonitor_db, &service, TRUE);
 			if (ent == NULL) {
-				PRINTE("got NULL from service\n");
+				PRINTD("Failed acquiring service entry from the table.\n");
 				is_error = TRUE;
 			}
 			else {
@@ -923,13 +930,13 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 		if (ip_ver == 4) {
 			ipv4_to_str(source->ipv4, src_ip_buff, sizeof(src_ip_buff));
 			ipv4_to_str(dest->ipv4, dst_ip_buff, sizeof(dst_ip_buff));
-			FPRINTF("src ip: %s | dst ip: %s | src port: %d | dst port: %d | proto: %d | is syn: %s | dir: %s | i_o: %c | iface: %s | vlan_id: %d | ip_id: %d | proto checksum: 0x%04x | timestamp: %ld.%09ld | \n",
+			PRINT("src ip: %s | dst ip: %s | src port: %d | dst port: %d | proto: %d | is syn: %s | dir: %s | i_o: %c | iface: %s | vlan_id: %d | ip_id: %d | proto checksum: 0x%04x | timestamp: %ld.%09ld | \n",
 				src_ip_buff, dst_ip_buff, sport, dport, proto, (is_syn == 1)?"yes":"no", (dir == C2S)?"C2S":"S2C", i_o, (if_desc == NULL)?"NULL":(if_desc), vlan_id, ip_id, proto_checksum, ts->tv_sec, ts->tv_usec);
 		}
 		else {
 			ipv6_to_str(&(source->ipv6), src_ip_buff, sizeof(src_ip_buff));
 			ipv6_to_str(&(dest->ipv6), dst_ip_buff, sizeof(dst_ip_buff));
-			FPRINTF("src ip: %s | dst ip: %s | src port: %d | dst port: %d | proto: %d | is syn: %s | dir: %s | i_o: %c | iface: %s | vlan_id: %d | ip_id: %d | proto checksum: 0x%04x | timestamp: %ld.%09ld | \n",
+			PRINT("src ip: %s | dst ip: %s | src port: %d | dst port: %d | proto: %d | is syn: %s | dir: %s | i_o: %c | iface: %s | vlan_id: %d | ip_id: %d | proto checksum: 0x%04x | timestamp: %ld.%09ld | \n",
 				src_ip_buff, dst_ip_buff, sport, dport, proto, (is_syn == 1)?"yes":"no", (dir == C2S)?"C2S":"S2C", i_o, (if_desc == NULL)?"NULL":(if_desc), vlan_id, ip_id, proto_checksum, ts->tv_sec, ts->tv_usec);
 		}
 	}
@@ -1021,18 +1028,18 @@ static void get_ports_icmp(icmphdr_t * icmp, uint16* sport, uint16* dport, uint1
 
 void print_unsupported_ipproto_counters()
 {
-	FPRINTF("small_IPV4HDR_LEN: %d\n", small_IPV4HDR_LEN);
-	FPRINTF("IPV4_FRAG_not_IPPROTO_ESP_SCTP: %d\n", IPV4_FRAG_not_IPPROTO_ESP_SCTP);
-	FPRINTF("small_IPV6HDR_LEN: %d\n", small_IPV6HDR_LEN);
-	FPRINTF("IPV6_FRAG_not_IPPROTO_ESP_SCTP: %d\n", IPV6_FRAG_not_IPPROTO_ESP_SCTP);
-	FPRINTF("unsupported_ip: %d\n", unsupported_ip);
-	FPRINTF("small_icmphdr_t: %d\n", small_icmphdr_t);
-	FPRINTF("small_tcphdr_t: %d\n", small_tcphdr_t);
-	FPRINTF("unknown_tcp_flag: %d\n", unknown_tcp_flag);
-	FPRINTF("small_udphdr_t: %d\n", small_udphdr_t);
-	FPRINTF("small_esphdr_t: %d\n", small_esphdr_t);
-	FPRINTF("small_sctphdr_t: %d\n", small_sctphdr_t);
-	FPRINTF("unsupported_ipproto: %d\n", unsupported_ipproto);
+	PRINT("small_IPV4HDR_LEN: %d\n", small_IPV4HDR_LEN);
+	PRINT("IPV4_FRAG_not_IPPROTO_ESP_SCTP: %d\n", IPV4_FRAG_not_IPPROTO_ESP_SCTP);
+	PRINT("small_IPV6HDR_LEN: %d\n", small_IPV6HDR_LEN);
+	PRINT("IPV6_FRAG_not_IPPROTO_ESP_SCTP: %d\n", IPV6_FRAG_not_IPPROTO_ESP_SCTP);
+	PRINT("unsupported_ip: %d\n", unsupported_ip);
+	PRINT("small_icmphdr_t: %d\n", small_icmphdr_t);
+	PRINT("small_tcphdr_t: %d\n", small_tcphdr_t);
+	PRINT("unknown_tcp_flag: %d\n", unknown_tcp_flag);
+	PRINT("small_udphdr_t: %d\n", small_udphdr_t);
+	PRINT("small_esphdr_t: %d\n", small_esphdr_t);
+	PRINT("small_sctphdr_t: %d\n", small_sctphdr_t);
+	PRINT("unsupported_ipproto: %d\n", unsupported_ipproto);
 }
 
 int parse_entry(void * data, int size, uint32 cap_len, struct timeval * ts, char i_o, char * if_desc, short vlan_id)
@@ -1095,8 +1102,8 @@ int parse_entry(void * data, int size, uint32 cap_len, struct timeval * ts, char
 	}
 	else {
 #ifdef DEBUG
-		extern entry_counter;
-		PRINT("Warn: ip version %d not supported (#%d)\n", ip_ver, entry_counter);
+		extern uint64 entry_counter;
+		PRINT("Warn: ip version %d not supported (#%llu)\n", ip_ver, entry_counter);
 #endif		
 		is_unsupported = TRUE;
 		PRINTD("found a unsupported ip version.  ip_ver is: %d. ", ip_ver);
@@ -1196,13 +1203,13 @@ int core_init()
 	memset(&cpmonitor_db, 0, sizeof(cpmonitor_db));
 
 	if (offsetof(hash_entry_base_t, data) - offsetof(hash_entry_base_t, key_type) != offsetof(hash_key_union_t, ipv4)) {
-		PRINTE("data structures alignment error\n");
+		PRINTE("data structures alignment error\n\n\n");
 		return -1;
 	}
 
-
+	PRINTD("Before allocating the hash table. connection_table_size is: %d\n", cpmonitor_conf.connection_table_size);
 	if (hash_init(&cpmonitor_db.hash_table, cpmonitor_conf.connection_table_size)) {
-		PRINTE("Failed allocating fivetuple hash memory\n");
+		PRINTE("Failed allocating fivetuple hash memory\n\n\n");
 		return -1;
 	}
 

@@ -64,6 +64,9 @@ typedef struct {
 #define DATE_TIME_FILE_NAME "%m.%d.%y_%R:%S"
 #define DATE_TIME_HISTORY_FILE_NAME "%m.%d.%y_%H%M"
 
+#define LINE_BUFF_LEN 512
+#define MAX_SERVICE_DESC_LEN 230
+
 
 /* inspired by http://stackoverflow.com/questions/7469139/what-is-equivalent-to-getch-getche-in-linux#16361724 */
 char getch(int TimeOut_sec, int vmin)
@@ -105,6 +108,44 @@ static int timeval_to_str(struct timeval * tv, char * buff, int len, int off, ch
 	}
 	else {
 		return snprintf(buff + off, len - off, "%s", tmbuf);
+	}
+}
+
+static void get_hash_key_fields(hash_key_union_t * key, char * src_ip_buff, uint16 src_buff_size, char * dst_ip_buff, uint16 dst_buff_size, uint16 * dport, uint16 * sport, uint8 * ipproto)
+{
+	switch (key->key_type) {
+		case HASH_IPV6_CONN:
+			ipv6_to_str(&key->conn_ipv6.src_ip, src_ip_buff, src_buff_size);
+			ipv6_to_str(&key->conn_ipv6.dst_ip, dst_ip_buff, dst_buff_size);
+			*dport = key->conn_ipv6.dport;
+			*sport = key->conn_ipv6.sport;
+			*ipproto = key->conn_ipv6.ipproto;
+			break;
+
+		case HASH_IPV4_CONN:
+			ipv4_to_str(key->conn_ipv4.src_ip, src_ip_buff, src_buff_size);
+			ipv4_to_str(key->conn_ipv4.dst_ip, dst_ip_buff, dst_buff_size);
+			*dport = key->conn_ipv4.dport;
+			*sport = key->conn_ipv4.sport;
+			*ipproto = key->conn_ipv4.ipproto;
+			break;
+
+		case HASH_IPV6_SERVER:
+			ipv6_to_str(&key->ipv6, src_ip_buff, src_buff_size);
+			break;
+
+		case HASH_IPV4_SERVER:
+			ipv4_to_str(key->ipv4, src_ip_buff, src_buff_size);
+			break;
+
+		case HASH_SERVICE:
+			*ipproto = key->service.ipproto;
+			break;
+
+		case HASH_NONE:
+		case HASH_KEY_MAX:
+		default:
+			break;
 	}
 }
 
@@ -445,8 +486,8 @@ static const char * PROTO_FORMATS[] = { "%5d\t" , "%d," };
 #define  P(_str_arr, ...) *off += snprintf(buff + *off, buff_len - *off, _str_arr[p_type], ##__VA_ARGS__)
 void file_add_ent_five_tuple(hash_key_union_t * key, print_type_e p_type, char* buff, int buff_len, int * off, const char * pre_str)
 {
-	char 	src_ip_buff[40] = {0};
-	char 	dst_ip_buff[40] = {0};
+	char 	src_ip_buff[IP_BUFF_SIZE] = {0};
+	char 	dst_ip_buff[IP_BUFF_SIZE] = {0};
 	uint16 	dport = 0;
 	uint16  sport = 0;
 	uint8	ipproto = 0;
@@ -487,36 +528,7 @@ void file_add_ent_five_tuple(hash_key_union_t * key, print_type_e p_type, char* 
 		*off += snprintf(buff + *off, buff_len - *off, "%s,", pre_str);
 	}
 	
-	switch (key->key_type) {
-	case HASH_IPV6_CONN:
-		ipv6_to_str(&key->conn_ipv6.src_ip, src_ip_buff, sizeof(src_ip_buff));
-		ipv6_to_str(&key->conn_ipv6.dst_ip, dst_ip_buff, sizeof(dst_ip_buff));
-		dport = key->conn_ipv6.dport;
-		sport = key->conn_ipv6.sport;
-		ipproto = key->conn_ipv6.ipproto;
-		break;
-		
-	case HASH_IPV4_CONN:
-		ipv4_to_str(key->conn_ipv4.src_ip, src_ip_buff, sizeof(src_ip_buff));
-		ipv4_to_str(key->conn_ipv4.dst_ip, dst_ip_buff, sizeof(dst_ip_buff));
-		dport = key->conn_ipv4.dport;
-		sport = key->conn_ipv4.sport;
-		ipproto = key->conn_ipv4.ipproto;
-		break;
-		
-	case HASH_IPV6_SERVER:		
-		ipv6_to_str(&key->ipv6, src_ip_buff, sizeof(src_ip_buff));
-		break;
-
-	case HASH_IPV4_SERVER:	
-		ipv4_to_str(key->ipv4, src_ip_buff, sizeof(src_ip_buff));
-		break;
-		
-	case HASH_NONE:
-	case HASH_SERVICE:
-	case HASH_KEY_MAX:
-		break;
-	}
+	get_hash_key_fields(key, src_ip_buff, sizeof(src_ip_buff), dst_ip_buff, sizeof(dst_ip_buff), &dport, &sport, &ipproto);
 
 	switch (key->key_type) {
 	case HASH_IPV6_CONN:
@@ -536,7 +548,7 @@ void file_add_ent_five_tuple(hash_key_union_t * key, print_type_e p_type, char* 
 		break;
 		
 	case HASH_SERVICE:
-		if(key->service.ipproto == IPPROTO_TCP || key->service.ipproto == IPPROTO_UDP) {
+		if(ipproto == IPPROTO_TCP || ipproto == IPPROTO_UDP) {
 			P(PORT_FORMATS, key->service.port);
 		}
 		else {
@@ -619,13 +631,14 @@ void file_add_headers_to_graph(top_ents_e type, usage_print_flags_t flags, print
 }
 
 void file_print_hash_table(hash_table_t* table) {
-	uint32 hash;
+	uint32 hash = 0;
 	hash_entry_base_t * ent = NULL;
-	char line_buff[512];
-	char usage_hdr_buff[512];
+	char line_buff[LINE_BUFF_LEN + MAX_SERVICE_DESC_LEN] = {0};
+	char usage_hdr_buff[LINE_BUFF_LEN] = {0};
 	int usage_hdr_buff_off = 0;
-	usage_t total_usage;
+	usage_t total_usage = {0};
 	usage_print_flags_t usage_print_flags = USAGE_PRINT_SYN_CNT | USAGE_PRINT_BYTES | USAGE_PRINT_PACKETS | USAGE_PRINT_PRECENTAGE | USAGE_PRINT_AV_PKT_SIZE | USAGE_PRINT_IN_OUT;
+
 	get_total_usage(&total_usage);
 	
 	PRINTF("printing connection table with %u elements to %s_*.csv\n", table->count, cpmonitor_conf.table_file_prefix_name);
@@ -634,7 +647,7 @@ void file_print_hash_table(hash_table_t* table) {
 	
 	/* print connections */
 	fprintf(cpmonitor_conf.table_conns_file, "%ssource ip,sport,dest ip,dport,protocol,description\n", usage_hdr_buff);
-	for (hash=0; hash < table->size; hash++) {
+	for (hash = 0 ; hash < table->capacity ; hash++) {
 		ent = table->hash[hash];
 		while (ent != NULL) {
 			if (HASH_IS_FIVETUPLE(ent)) {
@@ -647,7 +660,7 @@ void file_print_hash_table(hash_table_t* table) {
 
 	/* print hosts */
 	fprintf(cpmonitor_conf.table_hosts_file, "%sip\n", usage_hdr_buff);
-	for (hash=0; hash < table->size; hash++) {
+	for (hash = 0 ; hash < table->capacity ; hash++) {
 		ent = table->hash[hash];
 		while (ent != NULL) {
 			if (HASH_IS_HOST(ent)) {
@@ -660,7 +673,7 @@ void file_print_hash_table(hash_table_t* table) {
 	
 	/* print services */
 	fprintf(cpmonitor_conf.table_services_file, "%sport,service,description\n", usage_hdr_buff);
-	for (hash=0; hash < table->size; hash++) {
+	for (hash = 0 ; hash < table->capacity ; hash++) {
 		ent = table->hash[hash];
 		while (ent != NULL) {
 			if (HASH_IS_SERVICE(ent)) {
@@ -887,8 +900,11 @@ void print_top_connection_table(char *buffer, int buff_len, int *buff_off, summe
 {
 	TPrint *tp = NULL;
 	int i = 0;
-	char src_ip_buff[40] = {0};
-	char dst_ip_buff[40] = {0};
+	char src_ip_buff[IP_BUFF_SIZE] = {0};
+	char dst_ip_buff[IP_BUFF_SIZE] = {0};
+	uint16 	dport = 0;
+	uint16  sport = 0;
+	uint8	ipproto = 0;
 	char usage_str[100] = {0};
 	char byte_size[100] = {0};
 	char avg_size[100] = {0};
@@ -928,14 +944,13 @@ void print_top_connection_table(char *buffer, int buff_len, int *buff_off, summe
 		key  = &top_ents_arr[i].key;
 
 		/* conn_source + conn_dest + conn_dport + conn_sport + conn_IPP + conn_description */
+		get_hash_key_fields(key, src_ip_buff, sizeof(src_ip_buff), dst_ip_buff, sizeof(dst_ip_buff), &dport, &sport, &ipproto);
 		switch (key->key_type) {
 			case HASH_IPV6_CONN:
-				ipv6_to_str(&key->conn_ipv6.src_ip, src_ip_buff, sizeof(src_ip_buff));
 				tprint_data_add_str (tp, conn_source, src_ip_buff);
-				ipv6_to_str(&key->conn_ipv6.dst_ip, dst_ip_buff, sizeof(dst_ip_buff));
 				tprint_data_add_str(tp, conn_dest, dst_ip_buff);
 				/* if it's ICMP or ESP do not show ports */
-				switch (key->conn_ipv6.ipproto) {
+				switch (ipproto) {
 					case IPPROTO_ICMP:
 					case IPPROTO_ESP:
 						tprint_data_add_str(tp, conn_dport, "");	
@@ -943,16 +958,16 @@ void print_top_connection_table(char *buffer, int buff_len, int *buff_off, summe
 						tprint_data_add_str(tp, conn_description, "");
 						break;
 					case IPPROTO_SCTP:
-						tprint_data_add_int32(tp, conn_dport, key->conn_ipv6.dport);	
-						tprint_data_add_int32(tp, conn_sport, key->conn_ipv6.sport);
+						tprint_data_add_int32(tp, conn_dport, dport);
+						tprint_data_add_int32(tp, conn_sport, sport);
 						tprint_data_add_str(tp, conn_description, "");
 						break;
 					default:
-						tprint_data_add_int32(tp, conn_dport, key->conn_ipv6.dport);
-						tprint_data_add_int32(tp, conn_sport, key->conn_ipv6.sport);
+						tprint_data_add_int32(tp, conn_dport, dport);
+						tprint_data_add_int32(tp, conn_sport, sport);
 
-						if(key->conn_ipv6.dport < KNOWN_PORT_MAX && tcp_udp_service_name[key->conn_ipv6.dport]) {
-							tprint_data_add_str(tp, conn_description, tcp_udp_service_name[key->conn_ipv6.dport]);
+						if(dport < KNOWN_PORT_MAX && tcp_udp_service_name[dport]) {
+							tprint_data_add_str(tp, conn_description, tcp_udp_service_name[dport]);
 						} 
 						else {
 							tprint_data_add_str(tp, conn_description, "");
@@ -960,19 +975,16 @@ void print_top_connection_table(char *buffer, int buff_len, int *buff_off, summe
 						break;
 				}
 
-				if(!proto_name[key->conn_ipv6.ipproto]) {
-					tprint_data_add_int32(tp, conn_IPP, key->conn_ipv6.ipproto);
+				if(!proto_name[ipproto]) {
+					tprint_data_add_int32(tp, conn_IPP, ipproto);
 				} else {
-					tprint_data_add_str(tp, conn_IPP, proto_name[key->conn_ipv6.ipproto]);
+					tprint_data_add_str(tp, conn_IPP, proto_name[ipproto]);
 				}
-
 				
 				break;
 				
 			case HASH_IPV4_CONN:
-				ipv4_to_str(key->conn_ipv4.src_ip, src_ip_buff, sizeof(src_ip_buff));
 				tprint_data_add_str(tp, conn_source, src_ip_buff);
-				ipv4_to_str(key->conn_ipv4.dst_ip, dst_ip_buff, sizeof(dst_ip_buff));
 				tprint_data_add_str (tp, conn_dest, dst_ip_buff);
 				/* if it's ICMP or ESP do not show ports */
 				switch (key->conn_ipv4.ipproto) {
@@ -983,16 +995,16 @@ void print_top_connection_table(char *buffer, int buff_len, int *buff_off, summe
 						tprint_data_add_str(tp, conn_description, "");
 						break;
 					case IPPROTO_SCTP:
-						tprint_data_add_int32(tp, conn_dport, key->conn_ipv4.dport);	
-						tprint_data_add_int32(tp, conn_sport, key->conn_ipv4.sport);
+						tprint_data_add_int32(tp, conn_dport, dport);
+						tprint_data_add_int32(tp, conn_sport, sport);
 						tprint_data_add_str(tp, conn_description, "");
 						break;
 					default:
-						tprint_data_add_int32(tp, conn_dport, key->conn_ipv4.dport);
-						tprint_data_add_int32(tp, conn_sport, key->conn_ipv4.sport);
+						tprint_data_add_int32(tp, conn_dport, dport);
+						tprint_data_add_int32(tp, conn_sport, sport);
 
-						if(key->conn_ipv4.dport < KNOWN_PORT_MAX && tcp_udp_service_name[key->conn_ipv4.dport]) {
-							tprint_data_add_str(tp, conn_description, tcp_udp_service_name[key->conn_ipv4.dport]);
+						if(dport < KNOWN_PORT_MAX && tcp_udp_service_name[dport]) {
+							tprint_data_add_str(tp, conn_description, tcp_udp_service_name[dport]);
 						} 
 						else {
 							tprint_data_add_str(tp, conn_description, "");
@@ -1000,13 +1012,11 @@ void print_top_connection_table(char *buffer, int buff_len, int *buff_off, summe
 						break;
 				}
 
-				if(!proto_name[key->conn_ipv4.ipproto]) {
-					tprint_data_add_int32(tp, conn_IPP, key->conn_ipv4.ipproto);
+				if(!proto_name[ipproto]) {
+					tprint_data_add_int32(tp, conn_IPP, ipproto);
 				} else {
-					tprint_data_add_str(tp, conn_IPP, proto_name[key->conn_ipv4.ipproto]);
+					tprint_data_add_str(tp, conn_IPP, proto_name[ipproto]);
 				}
-
-				
 				
 				break;
 			case HASH_NONE:
@@ -1066,7 +1076,7 @@ void print_top_destinations_table(char *buffer, int buff_len, int *buff_off, sum
 {
 	TPrint *tp = NULL;
 	int i = 0;
-	char src_ip_buff[40] = {0};
+	char src_ip_buff[IP_BUFF_SIZE] = {0};
 	char usage_str[100] = {0};
 	char byte_size[100] = {0};
 	char avg_size[100] = {0};
@@ -1166,18 +1176,20 @@ end:
 
 void print_top_services_table(char *buffer, int buff_len, int *buff_off, summed_data_t * summed_data, int N, int print_flags)
 {
-	TPrint *tp;
-	int i;
-	char 	service_buff[100];
-	char	usage_str[100];
-	char 	byte_size[100];
-	char	avg_size[100];
+	TPrint *tp = NULL;
+	int i = 0;
+	char service_buff[100] = {0};
+	char usage_str[100] = {0};
+	char byte_size[100] = {0};
+	char avg_size[100] = {0};
 	int flags = USAGE_PRINT_BYTES | USAGE_PRINT_PACKETS | USAGE_PRINT_AV_PKT_SIZE | USAGE_PRINT_PRECENTAGE;
-	hash_key_union_t * 	key;
-	top_ent_t * top_ents_arr;
+	hash_key_union_t * key = NULL;
+	top_ent_t * top_ents_arr = NULL;
 	int offset = 0;
 	service_t service;
 	int min_rows = 0;
+
+	memset(&service, 0, sizeof(service));
 
 	if (print_flags & USAGE_PRINT_NAV_MODE) {
 		min_rows = N;
@@ -1370,10 +1382,10 @@ void print_nav_table(char *buffer, int buff_len, int *buff_off, summed_data_t * 
 
 void print_capture_info_table(char *buffer, int buff_len, int *buff_off, summed_data_t * summed_data)
 {
-	char 	start[96];
-	char	end[96];
-	char	buff[512];
-	TPrint *tp;
+	char 	start[96] = {0};
+	char	end[96] = {0};
+	char	buff[LINE_BUFF_LEN] = {0};
+	TPrint *tp = NULL;
 	
 	timeval_to_str(&summed_data->time_start, start, sizeof(start), 0, DATE_TIME, 1);
 	timeval_to_str(&summed_data->time_end, end, sizeof(end), 0, DATE_TIME, 1);
@@ -1431,6 +1443,11 @@ void sum_data_to_one(summed_data_t * summed_data, int from, int to, int N, summe
 	int						total_connections = 0;
 	uint32					unsupported_entries = 0;
 	int						total_cps = 0;
+	char					src_ip_buff[IP_BUFF_SIZE] = {0};
+	char					dst_ip_buff[IP_BUFF_SIZE] = {0};
+	uint16 					dport = 0;
+	uint16					sport = 0;
+	uint8					ipproto = 0;
 	
 	if(N > TOP_N) {
 		N = TOP_N;
@@ -1440,7 +1457,7 @@ void sum_data_to_one(summed_data_t * summed_data, int from, int to, int N, summe
 
 	memset(&tmp_cpmonitor_db, 0, sizeof(tmp_cpmonitor_db));
 	if(hash_init(&tmp_cpmonitor_db.hash_table, 600)) {
-		PRINTE("failed to create tmp_hash_table\n");
+		PRINTE("failed to create tmp_hash_table\n\n\n");
 		return;
 	}
 
@@ -1485,7 +1502,11 @@ void sum_data_to_one(summed_data_t * summed_data, int from, int to, int N, summe
 				}
 				ent = hash_ent_get(&tmp_cpmonitor_db, &top_ents_arr[i].key, TRUE);
 				if(!ent) {
-					PRINT("DEBUG: got NULL from top_ents_arr[i].key\n");
+					if (cpmonitor_conf.debug) {
+						get_hash_key_fields(&top_ents_arr[i].key, src_ip_buff, sizeof(src_ip_buff), dst_ip_buff, sizeof(dst_ip_buff), &dport, &sport, &ipproto);
+						PRINTD("Failed acquiring entry from the table for the following key: src_ip: %s, dst_ip: %s, dport: %d, sport: %d, ipproto: %d.\n",
+								(src_ip_buff == NULL)?"NULL":(src_ip_buff), (dst_ip_buff == NULL)?"NULL":(dst_ip_buff), dport, sport, ipproto);
+					}
 					continue;
 				}
 
@@ -1721,7 +1742,7 @@ void print_report()
 
 	print_tables(buff, sizeof(buff), &off, &comp_summed_data, N, USAGE_PRINT_DUMP_MODE | USAGE_PRINT_HOST_TABLE | USAGE_PRINT_SERV_TABLE | USAGE_PRINT_TCP_TABLE | USAGE_PRINT_CONN_TABLE | USAGE_PRINT_TOTAL_USAGE);
 
-	PRINTF("%s", buff);
+	PRINT("%s", buff);
 	
 	if(cpmonitor_conf.table_conns_file) {
 		file_print_hash_table(&(cpmonitor_db.hash_table));
@@ -1733,21 +1754,22 @@ void print_report()
 #define P(_buff, _format, ...) _buff##_off += snprintf(_buff + _buff##_off, sizeof(_buff) - _buff##_off, _format, ##__VA_ARGS__)
 void dump_navigate() 
 {
-	
 	summed_data_t summed_data;
-	char buffer[4096 * 10];
+	char buffer[4096 * 10] = {0};
 	int buffer_off = 0;	
-	int line_count;
-	range_t req_indexs;
-	int win_size;
-	int dump_length_in_sec;
-	char input;
+	int line_count = 0;
+	range_t req_indexs = {0};
+	int win_size = 0;
+	int dump_length_in_sec = 0;
+	char input = '\0';
 	BOOL keep_running = TRUE;
 	int N = 5;
 	BOOL help = FALSE;
 	BOOL refresh = FALSE;
 	BOOL exclude_first_sec = FALSE;
 	int print_flags = USAGE_PRINT_NAV_MODE | USAGE_PRINT_TOTAL_USAGE | USAGE_PRINT_CONN_TABLE | USAGE_PRINT_HOST_TABLE | USAGE_PRINT_SERV_TABLE | USAGE_PRINT_DUMP_MODE;
+
+	memset(&summed_data, 0, sizeof(summed_data));
 
 	dump_length_in_sec = cpmonitor_db.current_expire_index;
 	win_size = 1;
@@ -1890,12 +1912,12 @@ void dump_navigate()
 								"\tc		toggle connection table\n" 
 								"\td		toggle destinations table\n" 
 								"\ts		toggle services table\n" 
-								"\tt		toggle tcp stats table\n" 
+								"\tt		toggle TCP stats table\n"
 								"\ta		add line to tables\n" 
 								"\tz		remove line from tables\n" 
 								"\tq		quit\n" 
 								"\n"
-								"\tpress any key to return\n"
+								"\tPress any key to return\n"
 								);				
 			PRINTF("%s", buffer);
 			input = getch(0, 1);
