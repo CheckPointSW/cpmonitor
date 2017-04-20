@@ -62,12 +62,13 @@ static uint64 ether_type_counter = 0;
 static uint64 ARP_counter = 0;
 static uint64 layer_2_counter = 0;
 static uint64 non_ip_counter = 0;
+static uint64 bad_timestamp = 0;
 
 int read_dump_header() {
 	struct pcap_file_header * 		pcap_hdr  =	(struct pcap_file_header * ) 	dump_buff;
 	struct snoop_v2_file_header * 	snoop_hdr = (struct snoop_v2_file_header *) dump_buff;
 		
-	/* we have to check if it a pcap (tcpdump) cpmonitor_conf.dump_file, or a snoop cpmonitor_conf.dump_file (fw monitor)*/
+	/* we have to check if it is a pcap (tcpdump) cpmonitor_conf.dump_file, or a snoop cpmonitor_conf.dump_file (fw monitor)*/
 	fread(dump_buff,1,8,cpmonitor_conf.dump_file);
 	if ((0 == memcmp(snoop_hdr->snoop_str,"snoop\0\0\0", 8))) {
 		cpmonitor_conf.dump_type = snoop;
@@ -195,12 +196,16 @@ struct timeval get_end_time()
 	return curr_time;
 }
 
+// in mili sec
 int calc_time_diff(struct timeval* curr, struct timeval* prev)
 {
        int time_diff = 0;
        int factor = (cpmonitor_conf.dump_type == nsec) ? 1000000 : 1000;
 
+	   // time_diff is calculated in mili sec so we loose some precision when we divide tv_usec by factor
        time_diff = (((int)curr->tv_sec - (int)prev->tv_sec)*1000 + ((int)curr->tv_usec - (int)prev->tv_usec)/factor);
+
+	   PRINT("time diff: %d | ", time_diff);
 
        return time_diff;
 }
@@ -372,14 +377,15 @@ void summerize_timeslot_and_inc(struct timeval* curr, int* second_parsed)
 	cpmonitor_db.sum_unsupported_entries += cpmonitor_db.summed_data[(cpmonitor_db.current_expire_index - 1) % HISTORY_N].unsupported_entries;
 	memcpy(&summed_data_arr[(cpmonitor_db.current_expire_index - 1)], &cpmonitor_db.summed_data[(cpmonitor_db.current_expire_index - 1) % HISTORY_N], sizeof(*summed_data_arr));
 
-	(*second_parsed)++;
-	PRINTF("Parsed %d seconds\n", *second_parsed);
+	++(*second_parsed);
 
 	if (cpmonitor_conf.graph_name) {
 		expire_index = cpmonitor_db.current_expire_index;
 		file_add_top_ent_to_graph(cpmonitor_db.summed_data, TOP_CONNS, expire_index - 1, expire_index, 10, usage_print_flags, CSV, dump_buff, sizeof(dump_buff), &off);
 		fprintf(cpmonitor_conf.graph_file, "%s\n", dump_buff);
 	}
+
+	PRINTF("Parsed %d seconds\n", *second_parsed);
 }
 
 void print_debug_counters()
@@ -391,6 +397,7 @@ void print_debug_counters()
 	PRINT("num of ARP: %llu\n", ARP_counter);
 	PRINT("num of layer 2: %llu\n", layer_2_counter);
 	PRINT("num of non ip: %llu\n", non_ip_counter);
+	PRINT("num of bad timestamps: %llu\n", bad_timestamp);
 	PRINT("Total num of enteries: %llu\n", entry_counter);
 	PRINT("num of formally dropped entries: %d\n", cpmonitor_db.sum_unsupported_entries);
 	PRINT("======================================\n");
@@ -628,21 +635,41 @@ int read_dump_loop()
 			return (-1);
 		}
 
+		time_diff = calc_time_diff(&(pcap_hdr.ts), &prev_time); // time_diff is in msec
+		if ((time_diff / 1000) > DAEMON_HISTORY_N) {
+			/*
+				The 32-bit representation of Epoch time will end on 19 January, 2038 03:14:08 GMT.
+				So until then overflow should not occur.
+				We take the worst possible scenario into account where the packets arrive out of order -
+				the time diff cannot be greater than the total capture time cpmonitor allows (theoratically).
+				Meaning this packet has a bad timestamp. Drop the packet.
+			*/
+			PRINTD("found an entry with bad timestamp: %ld.%ld, previous: %ld.%ld (#%llu)\n", pcap_hdr.ts.tv_sec, pcap_hdr.ts.tv_usec, prev_time.tv_sec, prev_time.tv_usec, entry_counter);
+			cpmonitor_db.summed_data[cpmonitor_db.current_expire_index % HISTORY_N].unsupported_entries++;
+			bad_timestamp++;
+			continue;
+		}
+
 		if (parse_entry(entry, pcap_hdr.len, pcap_hdr.caplen, &pcap_hdr.ts, i_o, if_desc, vlan_id)) {
 			/* an error occured */
 			return (-1);
 		}
 
-		time_diff = calc_time_diff(&(pcap_hdr.ts), &prev_time);
-
-		while ( time_diff > cpmonitor_conf.timestep ) {
-			prev_time.tv_usec 	+= cpmonitor_conf.timestep * 1000;
-			prev_time.tv_sec 	+= prev_time.tv_usec/(1000*1000);
-			prev_time.tv_usec 	%= (1000*1000);	
+		while ((time_diff > cpmonitor_conf.timestep) && (second_parsed < DAEMON_HISTORY_N)) { // verify we don't exceed the seconds limit
+			if (cpmonitor_conf.dump_type == nsec) {
+				prev_time.tv_usec += cpmonitor_conf.timestep * 1000000; // cpmonitor_conf.timestep is in msec so we multiply it by 1000000
+				prev_time.tv_sec += prev_time.tv_usec / (1000 * 1000000);
+				prev_time.tv_usec %= (1000 * 1000000);
+			}
+			else {
+				prev_time.tv_usec += cpmonitor_conf.timestep * 1000; // cpmonitor_conf.timestep is in msec so we multiply it by 1000 to remain in usec
+				prev_time.tv_sec += prev_time.tv_usec / (1000 * 1000);
+				prev_time.tv_usec %= (1000 * 1000);
+			}
 
 			summerize_timeslot_and_inc(&prev_time, &second_parsed);
 			
-			time_diff = calc_time_diff(&(pcap_hdr.ts), &prev_time);
+			time_diff -= cpmonitor_conf.timestep; // we advance the timestamp in 1 second each loop, no need to do the entire calc_time_diff
 		}
 	}
 

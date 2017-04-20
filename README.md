@@ -19,11 +19,12 @@ It parses the input traffic capture file and extracts valuable information from 
 
     # cpmonitor [ flags ] <name_of_traffic_dump_file>
 
-	# cpmonitor [-v] [-q] [-n] [-o <output>] [-g <graph>] [-t <name>] [-s <p | t>] [-c <connection table size>] <name_of_traffic_dump_file>
+	# cpmonitor [--version] [-v] [-q] [-n] [-o <output>] [-g <graph>] [-t <name>] [-s <p | t>] [-c <connection table size>] </path_to/name_of_traffic_dump_file>
 
 	where:
 	Argument:								Description:
 	=========								============
+	--version								Display cpmonitor version number (and exit)
 	-v										Verbose mode
 	-q										Quiet mode, no output on stdout, prints only to output file(s)
 	-n										Navigates through dump file

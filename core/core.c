@@ -130,7 +130,7 @@ void do_free(void * ptr, const char * file, int line)
 	malloc_header_t* hdr = NULL;
 
 	if (UNLIKELY(ptr == NULL)) {
-		PRINT("NULL free at %s:%d", file, line);
+		PRINT("NULL free at %s:%d\n", file, line);
 		return;
 	}
 
@@ -930,13 +930,13 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 		if (ip_ver == 4) {
 			ipv4_to_str(source->ipv4, src_ip_buff, sizeof(src_ip_buff));
 			ipv4_to_str(dest->ipv4, dst_ip_buff, sizeof(dst_ip_buff));
-			PRINT("src ip: %s | dst ip: %s | src port: %d | dst port: %d | proto: %d | is syn: %s | dir: %s | i_o: %c | iface: %s | vlan_id: %d | ip_id: %d | proto checksum: 0x%04x | timestamp: %ld.%09ld | \n",
+			PRINT("src ip: %s | dst ip: %s | src port: %d | dst port: %d | proto: %d | is syn: %s | dir: %s | i_o: %c | iface: %s | vlan_id: %d | ip_id: %d | proto checksum: 0x%04x | timestamp: %ld.%ld | \n",
 				src_ip_buff, dst_ip_buff, sport, dport, proto, (is_syn == 1)?"yes":"no", (dir == C2S)?"C2S":"S2C", i_o, (if_desc == NULL)?"NULL":(if_desc), vlan_id, ip_id, proto_checksum, ts->tv_sec, ts->tv_usec);
 		}
 		else {
 			ipv6_to_str(&(source->ipv6), src_ip_buff, sizeof(src_ip_buff));
 			ipv6_to_str(&(dest->ipv6), dst_ip_buff, sizeof(dst_ip_buff));
-			PRINT("src ip: %s | dst ip: %s | src port: %d | dst port: %d | proto: %d | is syn: %s | dir: %s | i_o: %c | iface: %s | vlan_id: %d | ip_id: %d | proto checksum: 0x%04x | timestamp: %ld.%09ld | \n",
+			PRINT("src ip: %s | dst ip: %s | src port: %d | dst port: %d | proto: %d | is syn: %s | dir: %s | i_o: %c | iface: %s | vlan_id: %d | ip_id: %d | proto checksum: 0x%04x | timestamp: %ld.%ld | \n",
 				src_ip_buff, dst_ip_buff, sport, dport, proto, (is_syn == 1)?"yes":"no", (dir == C2S)?"C2S":"S2C", i_o, (if_desc == NULL)?"NULL":(if_desc), vlan_id, ip_id, proto_checksum, ts->tv_sec, ts->tv_usec);
 		}
 	}
