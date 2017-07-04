@@ -21,7 +21,7 @@
 
 //BUILDNUMBER should be increased manually each commit
 #ifndef BUILDNUMBER
-#define BUILDNUMBER 7
+#define BUILDNUMBER 8
 #endif
 
 /*

@@ -205,7 +205,10 @@ int calc_time_diff(struct timeval* curr, struct timeval* prev)
 	   // time_diff is calculated in mili sec so we loose some precision when we divide tv_usec by factor
        time_diff = (((int)curr->tv_sec - (int)prev->tv_sec)*1000 + ((int)curr->tv_usec - (int)prev->tv_usec)/factor);
 
-	   PRINT("time diff: %d | ", time_diff);
+	   if (cpmonitor_conf.debug) {
+		   // we don't use PRINTD since we don't need function and line print, this debug print will be part of each packet breakdown
+		   PRINT("time diff: %d | ", time_diff);
+	   }
 
        return time_diff;
 }
