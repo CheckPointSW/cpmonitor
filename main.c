@@ -47,6 +47,7 @@ void usage() {
 	/* [-d] flag is available as well, but intended for debug only so it is unofficial */
 	/* [-i <interval>] flag was removed since it wasn't used (probably was left over from the kernel mode) */
 	PRINTF(
+			"\nFor more information see sk103212.\n"
 			"\ncpmonitor usage:\n"
 			"  cpmonitor [ flags ] <name_of_traffic_dump_file>\n"
 		"  cpmonitor [--version] [-v] [-q] [-n] [-o <output>] [-g <graph>] [-t <name>]\n"

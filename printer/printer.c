@@ -138,6 +138,14 @@ static void get_hash_key_fields(hash_key_union_t * key, char * src_ip_buff, uint
 			ipv4_to_str(key->ipv4, src_ip_buff, src_buff_size);
 			break;
 
+		case HASH_IPV6_SOURCE:
+			ipv6_to_str(&key->ipv6, src_ip_buff, src_buff_size);
+			break;
+
+		case HASH_IPV4_SOURCE:
+			ipv4_to_str(key->ipv4, src_ip_buff, src_buff_size);
+			break;
+
 		case HASH_SERVICE:
 			*ipproto = key->service.ipproto;
 			break;
@@ -412,6 +420,8 @@ BOOL get_key_internet_layers_str(hash_key_union_t * key, print_type_e p_type, ch
 		break;
 
 	case HASH_NONE:
+	case HASH_IPV6_SOURCE:
+	case HASH_IPV4_SOURCE:
 	case HASH_IPV6_SERVER:		
 	case HASH_IPV4_SERVER:
 	case HASH_KEY_MAX:
@@ -465,7 +475,7 @@ BOOL get_key_internet_layers_str(hash_key_union_t * key, print_type_e p_type, ch
 	case IPPROTO_TCP:
 	case IPPROTO_UDP:
 		if(service.port < KNOWN_PORT_MAX && tcp_udp_service_name[service.port]) {
-			*off += snprintf(buff + *off, buff_len - *off, "%s %s%c", tcp_udp_service_name[service.port], tcp_udp_service_description[service.port], delim);	
+			*off += snprintf(buff + *off, buff_len - *off, "Connection Classification:%s, Description:%s%c", tcp_udp_service_name[service.port], tcp_udp_service_description[service.port], delim);
 		}
 		else {
 			*off += snprintf(buff + *off, buff_len - *off, "%d%c", service.port, delim);	
@@ -541,7 +551,9 @@ void file_add_ent_five_tuple(hash_key_union_t * key, print_type_e p_type, char* 
 			P(PROTO_FORMATS, ipproto);		
 		}
 		break;
-		
+
+	case HASH_IPV6_SOURCE:
+	case HASH_IPV4_SOURCE:
 	case HASH_IPV6_SERVER:		
 	case HASH_IPV4_SERVER:	
 		P(IP_FORMATS, src_ip_buff);
@@ -603,6 +615,10 @@ void file_add_headers_to_graph(top_ents_e type, usage_print_flags_t flags, print
 	case TOP_SERVERS:
 		*off += snprintf(buff + *off, buff_len - *off, "top servers\n");
 		break;
+
+	case TOP_SOURCES:
+		*off += snprintf(buff + *off, buff_len - *off, "top sources\n");
+		break;
 		
 	case TOP_SERVICES:
 		*off += snprintf(buff + *off, buff_len - *off, "top services\n");
@@ -618,6 +634,7 @@ void file_add_headers_to_graph(top_ents_e type, usage_print_flags_t flags, print
 		*off += snprintf(buff + *off, buff_len - *off, "       source%csport%c         dest%cdport%cproto\n", delim, delim, delim, delim);
 		break;
 
+	case TOP_SOURCES:
 	case TOP_SERVERS:
 		*off += snprintf(buff + *off, buff_len - *off, "           ip%c\n", delim);
 		break;
@@ -1068,6 +1085,107 @@ void print_top_connection_table(char *buffer, int buff_len, int *buff_off, summe
 		}
 	}
 end:
+	tprint_print (tp);
+	tprint_free (tp);
+}
+
+void print_top_sources_table(char *buffer, int buff_len, int *buff_off, summed_data_t * summed_data, int N, int print_flags)
+{
+	TPrint *tp = NULL;
+	int i = 0;
+	char src_ip_buff[IP_BUFF_SIZE] = {0};
+	char usage_str[100] = {0};
+	char byte_size[100] = {0};
+	char avg_size[100] = {0};
+	int flags = USAGE_PRINT_BYTES | USAGE_PRINT_PACKETS | USAGE_PRINT_AV_PKT_SIZE | USAGE_PRINT_PRECENTAGE;
+	hash_key_union_t * key = NULL;
+	top_ent_t * top_ents_arr = NULL;
+	int offset = 0;
+	int min_rows = 0;
+
+	if (print_flags & USAGE_PRINT_NAV_MODE) {
+		min_rows = N;
+	}
+
+	P_HEADLINE("Top sources\n");
+	tp = tprint_create (buffer, buff_len, buff_off, TABLES_SHOW_BORDER, TABLES_SHOW_HEADER, TABLES_SPACES_LEFT, TABLES_SPACES_BETWEEN, min_rows);
+
+	tprint_column_add (tp, "IP", TPAlign_center, TPAlign_left);
+	tprint_column_add (tp, "packets (%) [c2s/s2c]", TPAlign_center, TPAlign_right);
+	tprint_column_add (tp, "size (%) [c2s/s2c]", TPAlign_center, TPAlign_right);
+	tprint_column_add (tp, "avg", TPAlign_center, TPAlign_right);
+
+	if (summed_data[0].total_usage.packets == 0) {
+		tprint_print (tp);
+		tprint_free (tp);
+		return;
+	}
+
+	top_ents_arr = summed_data[0].top_ents[TOP_SOURCES];
+
+	for(i = TOP_N-1 ; i >= TOP_N-N ; i--) {
+
+		key  = &top_ents_arr[i].key;
+
+		/* server_ip*/
+		switch (key->key_type) {
+			case HASH_IPV6_SOURCE:
+				ipv6_to_str(&key->ipv6, src_ip_buff, sizeof(src_ip_buff));
+				tprint_data_add_str (tp, server_ip, src_ip_buff);
+				break;
+			case HASH_IPV4_SOURCE:
+				ipv4_to_str(key->ipv4, src_ip_buff, sizeof(src_ip_buff));
+				tprint_data_add_str (tp, server_ip, src_ip_buff);
+				break;
+			case HASH_NONE:
+				goto end;
+			default:
+				continue;
+		}
+
+		/* server_packets */
+		if(flags & USAGE_PRINT_PACKETS) {
+			uint32 u_packets;
+			uint32 percentage_c2s_u_packets;
+			u_packets = top_ents_arr[i].bidi_usage.c2s.packets + top_ents_arr[i].bidi_usage.s2c.packets;
+			percentage_c2s_u_packets = (uint32)(100*top_ents_arr[i].bidi_usage.c2s.packets)/u_packets;
+			P_PACK(usage_str, u_packets, (int)(100*u_packets)/summed_data[0].total_usage.packets, percentage_c2s_u_packets, 100 - percentage_c2s_u_packets);
+			tprint_data_add_str (tp, server_packets, usage_str);
+		}
+
+		/* server_troughput */
+		if(flags & USAGE_PRINT_BYTES) {
+			uint64 u_bytes;
+			uint32 percentage_c2s_u_bytes;
+			u_bytes = bidi_total_bytes(&top_ents_arr[i].bidi_usage);
+			percentage_c2s_u_bytes = (uint32)(100*top_ents_arr[i].bidi_usage.c2s.bytes)/u_bytes;
+			offset = 0;
+			bytes_convertor_str(u_bytes, byte_size, 100, &offset, BYTE_RES);
+			P_TP(usage_str, byte_size, (uint64)(100*u_bytes)/summed_data[0].total_usage.bytes, percentage_c2s_u_bytes, 100 - percentage_c2s_u_bytes);
+			tprint_data_add_str (tp, server_troughput, usage_str);
+		}
+
+		/* server_av_size */
+		if(flags & USAGE_PRINT_AV_PKT_SIZE) {
+			uint32 s2c_avg_size;
+			uint32 c2s_avg_size;
+			if(top_ents_arr[i].bidi_usage.s2c.packets == 0) {
+				s2c_avg_size = 0;
+			}
+			else {
+				s2c_avg_size = (uint32)top_ents_arr[i].bidi_usage.s2c.bytes / top_ents_arr[i].bidi_usage.s2c.packets;
+			}
+			if(top_ents_arr[i].bidi_usage.c2s.packets == 0) {
+				c2s_avg_size = 0;
+			}
+			else {
+				c2s_avg_size = (uint32)top_ents_arr[i].bidi_usage.c2s.bytes / top_ents_arr[i].bidi_usage.c2s.packets;
+			}
+			P_AVG(avg_size, c2s_avg_size, s2c_avg_size);
+			tprint_data_add_str(tp, server_av_size, avg_size);
+		}
+	}
+	end:
 	tprint_print (tp);
 	tprint_free (tp);
 }
@@ -1716,6 +1834,10 @@ void print_tables(char *buffer, int buff_len, int *buff_off, summed_data_t * sum
 
 	if(print_flags & USAGE_PRINT_HOST_TABLE) {
 		print_top_destinations_table(buffer, buff_len, buff_off, summed_data, N, print_flags);
+	}
+
+	if(print_flags & USAGE_PRINT_HOST_TABLE) {
+		print_top_sources_table(buffer, buff_len, buff_off, summed_data, N, print_flags);
 	}
 
 	if(print_flags & USAGE_PRINT_SERV_TABLE) {

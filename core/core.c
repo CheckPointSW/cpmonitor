@@ -322,14 +322,21 @@ static int is_keys_equal(hash_key_union_t * a, hash_key_union_t * b)
 	case HASH_IPV4_CONN:
 		return (memcmp(a->data, b->data, sizeof(ipv4_fivetuple_t)) == 0);
 
+	case HASH_IPV4_SOURCE:
+		return (memcmp(a->data, b->data, sizeof(ipv4_addr_t)) == 0) && a->key_type == HASH_IPV4_SOURCE && b->key_type == HASH_IPV4_SOURCE;
+
 	case HASH_IPV4_SERVER:
 		return (memcmp(a->data, b->data, sizeof(ipv4_addr_t)) == 0);
 
 	case HASH_SERVICE:
 		return (memcmp(a->data, b->data, sizeof(service_t)) == 0);
 
+
 	case HASH_IPV6_CONN:
 		return (memcmp(a->data, b->data, sizeof(ipv6_fivetuple_t)) == 0);
+
+	case HASH_IPV6_SOURCE:
+		return (memcmp(a->data, b->data, sizeof(ipv6_addr_t)) == 0) && a->key_type == HASH_IPV6_SOURCE && b->key_type == HASH_IPV6_SOURCE;
 
 	case HASH_IPV6_SERVER:
 		return (memcmp(a->data, b->data, sizeof(ipv6_addr_t)) == 0);
@@ -361,6 +368,13 @@ static uint32 cpmonitor_hash_func(hash_key_union_t * a, int table_size)
 		}
 		break;
 
+	case HASH_IPV4_SOURCE:
+		for (; i + sizeof(uint32) <= sizeof(ipv4_addr_t); i += sizeof(uint32)) {
+			hash ^= *((uint32*)&data[i]);
+		}
+		hash ^= 'b';
+		break;
+
 	case HASH_SERVICE:
 		for (; i + sizeof(uint32) <= sizeof(service_t); i += sizeof(uint32)) {
 			hash ^= *((uint32*)&data[i]);
@@ -377,6 +391,13 @@ static uint32 cpmonitor_hash_func(hash_key_union_t * a, int table_size)
 		for (; i + sizeof(uint32) <= sizeof(ipv4_addr_t); i += sizeof(uint32)) {
 			hash ^= *((uint32*)&data[i]);
 		}
+		break;
+
+	case HASH_IPV6_SOURCE:
+		for (; i + sizeof(uint32) <= sizeof(ipv6_addr_t); i += sizeof(uint32)) {
+			hash ^= *((uint32*)&data[i]);
+		}
+		hash ^= 'b';
 		break;
 
 	default:
@@ -435,9 +456,11 @@ static inline int hash_key_size(int key_t)
 	case HASH_IPV6_CONN:
 		return sizeof(ipv6_fivetuple_t);
 
+	case HASH_IPV4_SOURCE:
 	case HASH_IPV4_SERVER:
 		return sizeof(ipv4_addr_t);
 
+	case HASH_IPV6_SOURCE:
 	case HASH_IPV6_SERVER:
 		return sizeof(ipv6_addr_t);
 
@@ -676,6 +699,11 @@ void hash_ent_put_in_top_ents(cpmonitor_db_t * db, hash_entry_base_t * ent)
 		top_ents = db->summed_data[db->current_expire_index % HISTORY_N].top_ents[TOP_SERVERS];
 		break;
 
+	case HASH_IPV4_SOURCE:
+	case HASH_IPV6_SOURCE:
+		top_ents = db->summed_data[db->current_expire_index % HISTORY_N].top_ents[TOP_SOURCES];
+		break;
+
 	case HASH_SERVICE:
 		top_ents = db->summed_data[db->current_expire_index % HISTORY_N].top_ents[TOP_SERVICES];
 		break;
@@ -812,7 +840,7 @@ static void switch_src_dest(int ip_ver, hash_key_union_t * conn, hash_key_union_
 	}
 }
 
-static void conn_host_creator(hash_key_union_t * conn, hash_key_union_t * host, int ip_ver, ip_union_t * source, ip_union_t * dest, u_int sport, u_int dport, u_char proto)
+static void conn_host_source_creator(hash_key_union_t * conn, hash_key_union_t * host, hash_key_union_t * s_source, int ip_ver, ip_union_t * source, ip_union_t * dest, u_int sport, u_int dport, u_char proto)
 {
 	if (ip_ver == 4) {
 		conn->key_type = HASH_IPV4_CONN;
@@ -824,6 +852,9 @@ static void conn_host_creator(hash_key_union_t * conn, hash_key_union_t * host, 
 
 		host->key_type = HASH_IPV4_SERVER;
 		host->ipv4 = conn->conn_ipv4.dst_ip;
+
+		s_source->key_type = HASH_IPV4_SOURCE;
+		s_source->ipv4 = conn->conn_ipv4.src_ip;
 	}
 	else {
 		conn->key_type = HASH_IPV6_CONN;
@@ -836,6 +867,8 @@ static void conn_host_creator(hash_key_union_t * conn, hash_key_union_t * host, 
 		host->key_type = HASH_IPV6_SERVER;
 		host->ipv6 = conn->conn_ipv6.dst_ip;
 
+		s_source->key_type = HASH_IPV6_SOURCE;
+		s_source->ipv6 = conn->conn_ipv6.src_ip;
 	}
 }
 
@@ -859,6 +892,7 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 	hash_entry_base_t * ent = NULL;
 	hash_key_union_t 	conn;
 	hash_key_union_t 	host;
+	hash_key_union_t 	s_source;
 	hash_key_union_t 	service;
 	direction_t  		dir = C2S;
 	BOOL				is_error = FALSE;
@@ -866,7 +900,8 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 	char 				dst_ip_buff[IP_BUFF_SIZE] = {0};
 
 	memset(&conn, 0, sizeof(conn));
-	memset(&host, 0, sizeof(host));	
+	memset(&host, 0, sizeof(host));
+	memset(&s_source, 0, sizeof(s_source));
 	memset(&service, 0, sizeof(service));
 
 	inc_usage(&cpmonitor_db.total_usage, size);
@@ -874,17 +909,17 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 
 	/* connection */
 	if (UNLIKELY(is_syn)) {
-		conn_host_creator(&conn, &host, ip_ver, source, dest, sport, dport, proto);
+		conn_host_source_creator(&conn, &host, &s_source, ip_ver, source, dest, sport, dport, proto);
 		dir = C2S;
 		ent = hash_ent_get(&cpmonitor_db, &conn, TRUE);
 	}
 	else {
 		if (sport < dport) {
-			conn_host_creator(&conn, &host, ip_ver, source, dest, sport, dport, proto);
+			conn_host_source_creator(&conn, &host, &s_source, ip_ver, source, dest, sport, dport, proto);
 			dir = C2S;
 		}
 		else {
-			conn_host_creator(&conn, &host, ip_ver, dest, source, dport, sport, proto);
+			conn_host_source_creator(&conn, &host, &s_source, ip_ver, dest, source, dport, sport, proto);
 			dir = S2C;
 		}
 		ent = hash_ent_get(&cpmonitor_db, &conn, FALSE);
@@ -922,6 +957,16 @@ static int connection_count(int ip_ver, ip_union_t * source, ip_union_t * dest, 
 			}
 			else {
 				hash_ent_inc_usage(&cpmonitor_db,  ent, size, dir, is_syn);
+
+				/* source */
+				ent = hash_ent_get(&cpmonitor_db, &s_source, TRUE);
+				if (ent == NULL) {
+					PRINTD("Failed acquiring source entry from the table.\n");
+					is_error = TRUE;
+				}
+				else {
+					hash_ent_inc_usage(&cpmonitor_db,  ent, size, dir, is_syn);
+				}
 			}
 		}
 	}
@@ -1213,11 +1258,15 @@ int core_init()
 		return -1;
 	}
 
+	cpmonitor_db.is_hash_active = TRUE;
+
 	return 0;
 }
 
 void core_fini() 
 {
-	hash_free(&cpmonitor_db.hash_table);		
+	if(cpmonitor_db.is_hash_active) {
+		hash_free(&cpmonitor_db.hash_table);
+	}
 }
 

@@ -230,6 +230,8 @@ typedef enum {
 	HASH_IPV4_CONN,
 	HASH_IPV6_SERVER,
 	HASH_IPV6_CONN,
+	HASH_IPV4_SOURCE,
+	HASH_IPV6_SOURCE,
 	HASH_SERVICE,
 	/* if you add a type here, don't forget to update hash_key_size*/	 
 	HASH_KEY_MAX
@@ -318,6 +320,7 @@ typedef struct { /* the order of the members is very important */
 typedef enum {
 	TOP_CONNS,
 	TOP_SERVERS,
+	TOP_SOURCES,
 	TOP_SERVICES,
 	TOP_COUNT
 } top_ents_e;
@@ -373,6 +376,7 @@ typedef struct {
 	usage_t 		total_usage;
 	hash_table_t 	hash_table;
 	int 			current_expire_index;
+	int             is_hash_active;
 	summed_data_t 	summed_data[HISTORY_N];
 	uint32			sum_unsupported_entries;
 } cpmonitor_db_t;

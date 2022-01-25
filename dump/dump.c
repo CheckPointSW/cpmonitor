@@ -693,6 +693,8 @@ int dump_main()
 {
 	int ret = -1;
 
+	cpmonitor_db.is_hash_active = FALSE;
+
 	PRINTD("Trying to allocate summed_data_arr.\n");
 	summed_data_arr = MALLOC(sizeof(*summed_data_arr)*DAEMON_HISTORY_N);
 	if (summed_data_arr == NULL) {
